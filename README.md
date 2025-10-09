@@ -1,1 +1,1 @@
-# cv-for-early-lameness-detection
+# early-lameness-detection
