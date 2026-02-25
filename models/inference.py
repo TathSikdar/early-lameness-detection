@@ -1,12 +1,18 @@
-import cv2
-import numpy as np
-import re
-import os
-import matplotlib.pylab as plt
-from matplotlib.gridspec import GridSpec
+# import cv2
+# import numpy as np
+# import re
+# import os
+# import matplotlib.pylab as plt
+# from matplotlib.gridspec import GridSpec
 
 #The Model has been trained on the CEID-D Dataset sourced from Kaggle which has a collection of images of cows with ear tags labeled.
 #Current model is traind on the full color image, revisit this in the future and decide if training on grayscale images would be better.
+#Date flow process:
+
+#The frame first goes through the Ear tag detection model, this model will analyze the frame and output the relevan pixels
+#Which it thinks the ear tag is located at. This data then needs to be fed into another model which will will analyze cropped images
+#and output where it thinks the last row of the numbers is located. This is necessary becasue the OCR model needs a cropped image 
+#which contains nothing other than the text. Hence another Yolo model is created to extract the location of the bottom most row.
 
 class EarTagDectionAndLocaliztion:
     
@@ -77,21 +83,57 @@ class EarTagDectionAndLocaliztion:
         plt.show()  
         file.close()   
         
-    def train_model(self):
+    def clean_data(self):
+        path = f"/u50/fuzailm/EarTagModel/cow_eartag_recognition_dataset/train/labels/cleaned_gt_eartags0.txt"
+        
+        try: 
+            with open(path, "r+") as file:
+                content = file.read()
+                data = content.splitlines()
+                data = data[0].split(",")
+            file.close()
+        except:
+            pass
+        
+        length = len(data)
+        print(f"Length is: {length}")
+        print(0)
+        for index in range(0, len(data)):
+            if (index != (length -1)):
+                print(data[index])
+            else: 
+                continue
+                
+        
+    def train_model(self, model):
+        import torch
         from ultralytics import YOLO
-        model = YOLO("data/EarTagModel/cow_eartag_detection_dataset/yolo26m.pt")
         
-        model.train(data="data/EarTagModel/cow_eartag_detection_dataset/dataset_custom.yaml", imgsz=640, batch=8, epochs=5, workers=1, device='cpu')
+        epochs = 1
         
-    
-    def predict(self, path):
+        #If model is 1, train ear tag detection model
+        if(model):
+            model = YOLO("/u50/fuzailm/EarTagModel/cow_eartag_detection_dataset/yolo26m.pt")
+            if(torch.cuda.is_available()):
+                model.train(data="/u50/fuzailm/EarTagModel/cow_eartag_detection_dataset/dataset_custom.yaml",project="Ear_Tag_Detection_Model",name=f"Epochs_{epochs}", imgsz=640, batch=8, epochs=epochs, workers=1, device=0)
+            else:
+                model.train(data="/u50/fuzailm/EarTagModel/cow_eartag_detection_dataset/dataset_custom.yaml",project="Ear_Tag_Detection_Model",name=f"Epochs_{epochs}", imgsz=640, batch=8, epochs=epochs, workers=1, device='cpu')
+        else: #Otherwise train last row detection model
+            model = YOLO("/u50/fuzailm/EarTagModel/cow_eartag_recognition_dataset/yolo26m.pt")
+            if(torch.cuda.is_available()):
+                model.train(data="/u50/fuzailm/EarTagModel/cow_eartag_recognition_dataset/dataset_custom.yaml",project="Last_Row_Detection_Model",name=f"Epochs_{epochs}", imgsz=640, batch=8, epochs=epochs, workers=1, device=0)
+            else:
+                model.train(data="/u50/fuzailm/EarTagModel/cow_eartag_recognition_dataset/dataset_custom.yaml",project="Last_Row_Detection_Model",name=f"Epochs_{epochs}", imgsz=640, batch=8, epochs=epochs, workers=1, device='cpu')
+        
+    def predict_ear_tag_detection(self, path):
         from ultralytics import YOLO
+        import cv2
         
-        detection_mod = YOLO("runs/detect/train4/weights/best.pt")
+        detection_mod = YOLO("/u50/fuzailm/cow_gait_analysis/early-lameness-detection/runs/detect/Detection_Model/Epochs_1/weights/best.pt")
         
         #Read one image and run inference on it
         frame = cv2.imread(path)
-        result = detection_mod.predict(frame, show=True, save=True, name=f"preidcted")
+        result = detection_mod.predict(frame, show=True, save=True, name=f"predicted")
         
         return result
         
@@ -304,7 +346,7 @@ class EarTagIDExtraction:
 #================== Testing ========================       
 # Model 1: Ear Tag Detection
 detection_model = EarTagDectionAndLocaliztion()
-result = detection_model.train_model()
+result = detection_model.predict_ear_tag_detection("data/raw/Ear_Tag/1.jpg")
 
 # #Model 2: OCR ID # extraction
 # start = 3000
