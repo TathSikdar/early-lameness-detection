@@ -106,10 +106,15 @@ class EarTagDectionAndLocaliztion:
                 
         
     def train_model(self, model):
+        ''' 
+        Input: Model is an integer value to choose which model to train:
+        1 - Ear Tag detection
+        != 1 - OCR Model
+        '''
         import torch
         from ultralytics import YOLO
         
-        epochs = 1
+        epochs = 50
         
         #If model is 1, train ear tag detection model
         if(model):
@@ -346,7 +351,7 @@ class EarTagIDExtraction:
 #================== Testing ========================       
 # Model 1: Ear Tag Detection
 detection_model = EarTagDectionAndLocaliztion()
-result = detection_model.predict_ear_tag_detection("data/raw/Ear_Tag/1.jpg")
+result = detection_model.train_model(1)
 
 # #Model 2: OCR ID # extraction
 # start = 3000
