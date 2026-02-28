@@ -1,9 +1,9 @@
-# import cv2
-# import numpy as np
-# import re
-# import os
-# import matplotlib.pylab as plt
-# from matplotlib.gridspec import GridSpec
+import cv2
+import numpy as np
+import re
+import os
+import matplotlib.pylab as plt
+from matplotlib.gridspec import GridSpec
 
 #The Model has been trained on the CEID-D Dataset sourced from Kaggle which has a collection of images of cows with ear tags labeled.
 #Current model is traind on the full color image, revisit this in the future and decide if training on grayscale images would be better.
@@ -103,13 +103,74 @@ class EarTagDectionAndLocaliztion:
                 print(data[index])
             else: 
                 continue
+            
+    def clean_labels_for_last_row_detection(self):
+        clean_train_or_val = "val"
+        
+        path = f"/u50/fuzailm/EarTagModel/cow_eartag_recognition_dataset/{clean_train_or_val}/labels"
+        img_path = f"/u50/fuzailm/EarTagModel/cow_eartag_recognition_dataset/{clean_train_or_val}/images"
+        
+        # ++++++++++++++++++++ Process data and normalize data ++++++++++++++++
+        # for i in range(2501,3238):
+        #     try:
+        #         label_path = path + f"/cleaned_gt_eartags{i}.txt"
+        #         #Read in the images
+        #         abs_img_path = img_path + f"/eartags{i}.jpg"
+        #         img = cv2.imread(abs_img_path)
+        #         img_height, img_width, channel = img.shape
+        #         with open(label_path, "r+") as f:
+        #             content = f.read()
+        #             split_content = content.split(",")
+        #             split_content.pop()
+        #             to_write = "0"
+        #             for val in range(0, len(split_content), 2):
+        #                 #Nomalize the value before writing
+        #                 normal_x = int(split_content[val]) / img_width
+        #                 normal_y = int(split_content[val+1]) / img_height
+                        
+        #                 to_write += f",{normal_x},{normal_y}"
+        #             to_write += '\n'
+                    
+        #             #Erase the old data and write the new one!
+        #             f.seek(0)
+        #             f.truncate()
+        #             f.write(to_write)
+        #         f.close()
+        #     except Exception as e:
+        #         #print(f"In Exception: {e} occured") 
+        #         continue                    
+        
+        # ++++++++++++++++ Process data to remove commans and rewrite data +++++++++++
+        # for i in range(2501, 3238):
+        #     try:
+        #         label_path = path + f"/cleaned_gt_eartags{i}.txt"
                 
+        #         #Open File
+        #         with open(label_path, "r+") as f:
+        #             content = f.read()
+        #             content = content.replace(",", " ") #Replace the commands with spaces
+                    
+        #             #Move cursor back, remove old content, write new content
+        #             f.seek(0)
+        #             f.truncate()
+        #             f.write(content)
+        #         f.close()
+        #     except:
+        #         continue
+
+        # ++++++++++++++++ Renaming the Python Files +++++++++++++
+        for i in range(2501,3238):
+            try:
+                label_path = path + f"/cleaned_gt_eartags{i}.txt"
+                os.rename(label_path, path + f"/eartags{i}.txt")
+            except:
+                pass
         
     def train_model(self, model):
         ''' 
         Input: Model is an integer value to choose which model to train:
         1 - Ear Tag detection
-        != 1 - OCR Model
+        0 - OCR Model
         '''
         import torch
         from ultralytics import YOLO
@@ -124,7 +185,7 @@ class EarTagDectionAndLocaliztion:
             else:
                 model.train(data="/u50/fuzailm/EarTagModel/cow_eartag_detection_dataset/dataset_custom.yaml",project="Ear_Tag_Detection_Model",name=f"Epochs_{epochs}", imgsz=640, batch=8, epochs=epochs, workers=1, device='cpu')
         else: #Otherwise train last row detection model
-            model = YOLO("/u50/fuzailm/EarTagModel/cow_eartag_recognition_dataset/yolo26m.pt")
+            model = YOLO("/u50/fuzailm/EarTagModel/cow_eartag_recognition_dataset/yolo26m-obb.pt")
             if(torch.cuda.is_available()):
                 model.train(data="/u50/fuzailm/EarTagModel/cow_eartag_recognition_dataset/dataset_custom.yaml",project="Last_Row_Detection_Model",name=f"Epochs_{epochs}", imgsz=640, batch=8, epochs=epochs, workers=1, device=0)
             else:
@@ -351,7 +412,8 @@ class EarTagIDExtraction:
 #================== Testing ========================       
 # Model 1: Ear Tag Detection
 detection_model = EarTagDectionAndLocaliztion()
-result = detection_model.train_model(1)
+# result = detection_model.clean_labels_for_last_row_detection()
+detection_model.train_model(0)
 
 # #Model 2: OCR ID # extraction
 # start = 3000
