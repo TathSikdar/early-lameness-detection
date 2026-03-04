@@ -62,7 +62,6 @@ class ImageFolderCamera(BaseCamera): #Frames sourced from a folder of images
     def resize_img(self, frame):
         #Resize all outgoing images to the same dimentions
         dst = cv2.resize(frame, dsize=(1280, 720), interpolation=cv2.INTER_LINEAR)
-        
         return dst
     
     def reset(self):

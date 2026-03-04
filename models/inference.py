@@ -13,7 +13,6 @@ from matplotlib.gridspec import GridSpec
 #Which it thinks the ear tag is located at. This data then needs to be fed into another model which will will analyze cropped images
 #and output where it thinks the last row of the numbers is located. This is necessary becasue the OCR model needs a cropped image 
 #which contains nothing other than the text. Hence another Yolo model is created to extract the location of the bottom most row.
-
 class EarTagDectionAndLocaliztion:
     
     def __init__(self):
@@ -413,7 +412,7 @@ class EarTagIDExtraction:
 # Model 1: Ear Tag Detection
 detection_model = EarTagDectionAndLocaliztion()
 # result = detection_model.clean_labels_for_last_row_detection()
-detection_model.train_model(0)
+# detection_model.train_model(0)
 
 # #Model 2: OCR ID # extraction
 # start = 3000

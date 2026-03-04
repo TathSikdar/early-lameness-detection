@@ -1,0 +1,5 @@
+#Ignore the data files with the video footage
+data/raw/front/
+data/raw/side/
+data/raw/side_4k/
+data/raw/top/
