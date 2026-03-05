@@ -1,65 +1,110 @@
-#This python script will be used to segment the long video session into many smaller clips 7-9 sec
-#for each cow. The structure will consist of 
 import cv2
 import matplotlib.pyplot as plt
 import time as tm
-
-TOP_X_START = 140
-TOP_X_END = 640
-TOP_Y_START = 100
-TOP_Y_END = 300
-
-SIDE_X_START = 200
-SIDE_X_END = 640
-SIDE_Y_START = 150
-SIDE_Y_END = 360
-
-FRONT_X_START = 150
-FRONT_X_END = 420
-FRONT_Y_START = 100
-FRONT_Y_END = 350
+import numpy as np
+import os
+import shutil
 
 TOP = 0
 SIDE = 1
 FRONT = 2
 
 class Segmenter:
-    def __init__(self):
-        pass
-    
-    def display_vid(self, path_to_vid, view=TOP):
-        """ 
-        Purpose: This function displays the sliced video of the camera view requestion
-        Input:
-            path_to_vid: The path to the video to display in string
-            view: TOP, SIDE, or FRONT constant for video to display
-        Output:
-            A window displaying video
+    def __init__(self, top_path='data/raw/top/top.mp4', side_path='data/raw/side/side.mp4', front_path='data/raw/front/front.mp4',
+                 TOP_SLICE_DATA= (140, 640, 100, 300),
+                 SIDE_SLICE_DATA= (200, 640, 150, 360),
+                 FRONT_SLICE_DATA= (150, 420, 100, 350)):
+        self.view_paths = {
+            'top': (top_path, TOP),
+            'side': (side_path, SIDE),
+            'front': (front_path, FRONT)
+        }
+        self.TOP_X_START = TOP_SLICE_DATA[0]
+        self.TOP_X_END = TOP_SLICE_DATA[1]
+        self.TOP_Y_START = TOP_SLICE_DATA[2]
+        self.TOP_Y_END = TOP_SLICE_DATA[3]
+        self.SIDE_X_START = SIDE_SLICE_DATA[0]  
+        self.SIDE_X_END = SIDE_SLICE_DATA[1]
+        self.SIDE_Y_START = SIDE_SLICE_DATA[2]
+        self.SIDE_Y_END = SIDE_SLICE_DATA[3]
+        self.FRONT_X_START = FRONT_SLICE_DATA[0]
+        self.FRONT_X_END = FRONT_SLICE_DATA[1]
+        self.FRONT_Y_START = FRONT_SLICE_DATA[2]
+        self.FRONT_Y_END = FRONT_SLICE_DATA[3]
+
+    def create_cow_folders(self, output_dir, session_id, cow_id):
         """
-        cam = cv2.VideoCapture(path_to_vid)
+        Creates the necessary subfolders for a cow's segmented data.
         
-        if not cam:
-            print("Error: Could not open video.")
-            
-        while True:
-            ret, frame = cam.read() #Read one frame
-            
-            if not ret:
-                break
-            
-            frame = self.slice(frame, camera=view)
-            cv2.imshow("Video", frame)  
-            
-            #Wait 1ms; break if 'q' is pressed
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-        cam.release()
+        Input:
+            output_dir (str): Base output directory.
+            session_id (str): Session identifier.
+            cow_id (str): Cow identifier.
         
-    def display_all(self, front, side, top):
+        Creates folders: output_dir/session_id/cow_id/front, /top, /side, /ear_tag
+        """
+        cow_dir = os.path.join(output_dir, session_id, cow_id)
+        folders = ['front', 'top', 'side', 'ear_tag']
+        
+        for folder in folders:
+            folder_path = os.path.join(cow_dir, folder)
+            os.makedirs(folder_path, exist_ok=True)
+            print(f"Created folder: {folder_path}")
+    
+    def capture_background_frame(self, camera_view, frame_number, output_dir, session_id):
+        """
+        Captures and saves the background frame from the original video for background subtraction.
+        
+        Args:
+            camera_view (str): 'top', 'side', or 'front'
+            frame_number (int): Frame number to capture as background
+            output_dir (str): Base output directory
+            session_id (str): Session identifier
+        
+        Saves the sliced background frame as output_dir/session_id/background_{camera_view}.jpg
+        """
+        if camera_view not in self.view_paths:
+            raise ValueError(f"Invalid camera_view: {camera_view}. Must be 'top', 'side', or 'front'")
+        
+        video_path, view_const = self.view_paths[camera_view]
+        
+        # Open video
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise ValueError(f"Could not open video: {video_path}")
+        
+        # Set frame position
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+        
+        # Read frame
+        ret, frame = cap.read()
+        if not ret:
+            cap.release()
+            raise ValueError(f"Could not read frame {frame_number} from {video_path}")
+        
+        cap.release()
+        
+        # Slice the frame
+        sliced_frame = self.slice(frame, camera=view_const)
+        
+        # Save to session folder
+        session_dir = os.path.join(output_dir, session_id)
+        os.makedirs(session_dir, exist_ok=True)
+        background_path = os.path.join(session_dir, f'background_{camera_view}.jpg')
+        cv2.imwrite(background_path, sliced_frame)
+        
+        print(f"Background frame saved to: {background_path}")
+        return background_path
+        
+    def display_all(self, frame_delay=-1):
         frame_count = 0
-        front_cam = cv2.VideoCapture(front)
-        side_cam = cv2.VideoCapture(side)
-        top_cam = cv2.VideoCapture(top)
+        top_path, const = self.view_paths['top']
+        side_path, const = self.view_paths['side']
+        front_path, const = self.view_paths['front']
+        
+        front_cam = cv2.VideoCapture(front_path)
+        side_cam = cv2.VideoCapture(side_path)
+        top_cam = cv2.VideoCapture(top_path)
         
         #Get the total numbers for frames from the metadata of the file
         front_count = int(front_cam.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -80,11 +125,9 @@ class Segmenter:
             
             if ignore_frame_flag:
                 #ignores the current frame
-                print("Ignore frame flag is True, making false")
                 ignore_frame_flag = False
                 continue
             elif not ignore_frame_flag:
-                print("NOT")
                 ignore_frame_flag = True
                 pass
             
@@ -93,17 +136,19 @@ class Segmenter:
             top_sliced = self.slice(top_frame, camera=TOP)
             side_sliced = self.slice(side_frame, camera=SIDE)
             
-            tm.sleep(1)
+            #Only time delay if the user specifies a time delay, otherwise just run as fast as possible
+            if(frame_delay > 0):
+                tm.sleep(frame_delay)
+            else:
+                pass
             
             if not (ret1 and ret2 and ret3):
-                print("Error: One of the frames not read")
-                break
+                raise ValueError("Error reading frames from one of the videos.")    
             
+            #limit set for now so that video does not read indefinitely, can be removed later!
             if frame_count >= 3000:
                 break
             
-            current_frame_id = int(front_cam.get(cv2.CAP_PROP_POS_FRAMES))
-            print(f"Current frame ID: {current_frame_id}")
             
             #Resize frames
             width, height = 320, 240
@@ -134,34 +179,6 @@ class Segmenter:
         top_cam.release()
         
         print(f"Frame Count: {frame_count}")
-        
-        
-    def display_single_frame(self, path_to_vid, view=TOP):
-        """
-        Purpose: This function display a single frame of the request camera type with pixel value axis
-            aids in figuring pixels value to slice frame for.
-        Input:
-            path_to_vid: The path to the video to display in string.
-            view: TOP, SIDE, or FRONT constant for video to display.
-        Output:
-            A display window with frame 
-        """
-        cam = cv2.VideoCapture(path_to_vid)
-        
-        if not cam:
-            print("Error: Could not open video")
-            
-        ret, frame = cam.read()
-        if not ret:
-            print("Error: Frame read failed")
-            return
-        
-        h, w, c = frame.shape
-        print(f"Height: {h}, Width: {w}, Channel: {c}")
-        self.show(frame)
-        
-        cam.release()
-        return
                     
             
     def show(self, frame):
@@ -186,25 +203,90 @@ class Segmenter:
         """
         try:
             if camera == TOP:
-                return (frame[TOP_Y_START:TOP_Y_END,TOP_X_START:TOP_X_END,:])
+                return (frame[self.TOP_Y_START:self.TOP_Y_END,self.TOP_X_START:self.TOP_X_END,:])
             elif camera == FRONT:
-                return (frame[FRONT_Y_START:FRONT_Y_END,FRONT_X_START:FRONT_X_END,:])
+                return (frame[self.FRONT_Y_START:self.FRONT_Y_END,self.FRONT_X_START:self.FRONT_X_END,:])
             elif camera == SIDE:
-                return (frame[SIDE_Y_START:SIDE_Y_END,SIDE_X_START:SIDE_X_END,:])
+                return (frame[self.SIDE_Y_START:self.SIDE_Y_END,self.SIDE_X_START:self.SIDE_X_END,:])
         except:
             raise ValueError("Value error of frame received, cannot slice frame!")
 
+class Cleanup:
+    def __init__(self):
+        pass
+    
+    def remove_cow_folders(self, output_dir, session_id, cow_id):
+        """
+        Removes the subfolders created for a cow's segmented data.
         
+        Input:
+            output_dir (str): Base output directory.
+            session_id (str): Session identifier.
+            cow_id (str): Cow identifier.
+        
+        Removes folders: output_dir/session_id/cow_id/front, /top, /side, /ear_tag
+        """
+        cow_dir = os.path.join(output_dir, session_id, cow_id)
+        folders = ['front', 'top', 'side', 'ear_tag']
+        
+        for folder in folders:
+            folder_path = os.path.join(cow_dir, folder)
+            if os.path.exists(folder_path):
+                shutil.rmtree(folder_path)
+                print(f"Removed folder: {folder_path}")
+            else:
+                print(f"Folder does not exist: {folder_path}")
+        
+        # Optionally remove the cow_dir if empty
+        try:
+            os.rmdir(cow_dir)
+            print(f"Removed empty cow directory: {cow_dir}")
+        except OSError:
+            print(f"Cow directory not empty or does not exist: {cow_dir}")
+            
+    
+            
+    
+    def remove_all(self, output_dir, session_id, remove_session_folder=False):
+        """
+        Remove every cow folder under a session. Optionally delete the session directory itself.
+        
+        This implementation leverages ``remove_cow_folders`` to ensure
+        consistent cleanup logic for each cow.
+        
+        Args:
+            output_dir (str): Base output directory.
+            session_id (str): Session identifier.
+            remove_session_folder (bool): if True, delete the session folder after cleaning.
+        """
+        session_dir = os.path.join(output_dir, session_id)
+        if not os.path.exists(session_dir):
+            print(f"Session directory does not exist: {session_dir}")
+            return
+        
+        # delete all cows inside using existing helper
+        for item in os.listdir(session_dir):
+            cow_dir = os.path.join(session_dir, item)
+            if os.path.isdir(cow_dir):
+                self.remove_cow_folders(output_dir, session_id, item)
+        
+        if remove_session_folder:
+            try:
+                shutil.rmtree(session_dir)
+                print(f"Removed session directory: {session_dir}")
+            except OSError:
+                print(f"Could not remove session directory (not empty?): {session_dir}")
     
 seg = Segmenter()
-side = "data/raw/side/side.mp4"
-top = "data/raw/top/top.mp4"
-front = "data/raw/front/front.mp4"
+cleaner = Cleanup()
 
-# seg.display_single_frame(path_to_vid, view=SIDE)
-# seg.display_vid(path_to_vid=front, view=FRONT)
-seg.display_all(front=front, side=side, top=top)
-    
-    
-    
+
+# seg.display_all(frame_delay=0.5)
+seg.capture_background_frame(camera_view='top', frame_number=2000, output_dir="data/processed", session_id="session_1")
+seg.create_cow_folders(output_dir="data/processed", session_id="session_1", cow_id="cow_1")
+seg.create_cow_folders(output_dir="data/processed", session_id="session_1", cow_id="cow_2")
+seg.create_cow_folders(output_dir="data/processed", session_id="session_1", cow_id="cow_3")
+
+# cleaner.remove_cow_folders(output_dir="data/processed", session_id="session_1", cow_id="cow_1") 
+cleaner.remove_all(output_dir="data/processed", session_id="session_1", remove_session_folder=True)
     
