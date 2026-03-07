@@ -4,6 +4,7 @@ import time as tm
 import numpy as np
 import os
 import shutil
+import json
 
 TOP = 0
 SIDE = 1
@@ -96,11 +97,179 @@ class Segmenter:
         print(f"Background frame saved to: {background_path}")
         return background_path
         
+    def background_subtract(self, background_path, frame):
+        """
+        Performs background subtraction on a given frame using a background image.
+        
+        Args:
+            background_path (str): Path to the background image file.
+            frame (numpy.ndarray): The current frame to subtract background from.
+        
+        Returns:
+            numpy.ndarray: The frame with background subtracted (difference image).
+        
+        Raises:
+            ValueError: If the background image cannot be loaded or dimensions don't match.
+        """
+        # Load the background image
+        background = cv2.imread(background_path)
+        if background is None:
+            raise ValueError(f"Could not load background image from: {background_path}")
+        
+        # Check if dimensions match
+        if background.shape != frame.shape:
+            raise ValueError(f"Background image dimensions {background.shape} do not match frame dimensions {frame.shape}")
+        
+        # Perform background subtraction using absolute difference
+        subtracted_frame = cv2.absdiff(frame, background)
+        
+        return subtracted_frame
+        
+    def create_base_metadata(self, session_id):
+        """
+        Creates the base metadata structure for a session.
+        
+        Args:
+            session_id (str): Session identifier
+            
+        Returns:
+            dict: Base metadata structure with session info and empty cow segments
+        """
+        metadata = {
+            'session_id': session_id,
+            'timestamp': tm.strftime('%Y-%m-%d %H:%M:%S'),
+            'segments': {}
+        }
+        return metadata
+    
+    def aggregate_segments(self, output_dir, session_id):
+        """
+        Extracts segments from all three camera views and aggregates them by cow ID.
+        Applies the 125-frame offset for the side camera (5 seconds * 25 fps).
+        
+        Args:
+            output_dir (str): Base output directory
+            session_id (str): Session identifier
+            
+        Returns:
+            dict: Aggregated segment data with structure:
+                  {
+                    'cow_0': {'top': {...}, 'front': {...}, 'side': {...}},
+                    'cow_1': {'top': {...}, 'front': {...}, 'side': {...}},
+                    ...
+                  }
+        """
+        aggregated_segments = {}
+        front_segments_data = None
+        
+        # Extract segments from all three views (process front first for side extraction)
+        for view in ['front', 'top', 'side']:
+            print(f"\nExtracting segments from {view.upper()} view...")
+            
+            # For side view, pass front segments
+            if view == 'side':
+                if front_segments_data is None:
+                    print("ERROR: Front segments not yet extracted, cannot extract side segments")
+                    continue
+                segments_data = self.extract_segments(view, output_dir, session_id, front_segments=front_segments_data)
+            else:
+                segments_data = self.extract_segments(view, output_dir, session_id)
+            
+            # Store front segments for later use with side extraction
+            if view == 'front':
+                front_segments_data = segments_data
+            
+            # Aggregate segments by cow_id
+            for cow_id, segment_data in segments_data.items():
+                frames = segment_data['frames']
+                status = segment_data['Flagged']
+                
+                # Initialize cow entry if it doesn't exist
+                if cow_id not in aggregated_segments:
+                    aggregated_segments[cow_id] = {}
+                
+                # Store the segment data for this view
+                aggregated_segments[cow_id][view] = {
+                    'start_frame': frames[0],
+                    'end_frame': frames[-1],
+                    'duration': len(frames),
+                    'Flagged': status
+                }
+        
+        return aggregated_segments
+    
+    def save_metadata(self, metadata, output_dir, session_id):
+        """
+        Writes the complete metadata structure to a JSON file.
+        
+        Args:
+            metadata (dict): Metadata dictionary to save
+            output_dir (str): Base output directory
+            session_id (str): Session identifier
+            
+        Returns:
+            str: Path to the saved metadata file
+        """
+        # Create session directory if it doesn't exist
+        session_dir = os.path.join(output_dir, session_id)
+        os.makedirs(session_dir, exist_ok=True)
+        
+        # Save to JSON file
+        metadata_filename = f"metadata_{session_id}.json"
+        metadata_path = os.path.join(session_dir, metadata_filename)
+        
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
+        
+        print(f"\nMetadata saved to: {metadata_path}")
+        return metadata_path    
+    def _extract_side_segments(self, front_segments):
+        """
+        Helper function to extract side camera segments based on front camera segments.
+        Takes 10 frames starting 40 frames before each front segment start.
+        
+        Args:
+            front_segments (dict): Dictionary of front camera segments with format:
+                                  {'cow_0': {'frames': [...], 'Flagged': '...'}, ...}
+        
+        Returns:
+            dict: Dictionary of side camera segments with format:
+                  {'cow_0': {'frames': [frame_list], 'Flagged': 'GOOD'/'TOO_SHORT'}, ...}
+        """
+        segments = {}
+        
+        for cow_id, segment_data in front_segments.items():
+            frames = segment_data['frames']
+            if frames:
+                front_start = frames[0]
+                # Side segment: 10 frames starting 40 frames before front start
+                side_start = max(1, front_start - 40)  # Ensure we don't go below frame 1
+                side_end = front_start - 31  # 10 frames: from 40 to 31 frames before
+                
+                # Create side segment frames list
+                side_frames = list(range(side_start, side_end + 1))
+                segment_length = len(side_frames)
+                
+                # Check if segment meets minimum length (should be 10 if front_start > 40)
+                if segment_length >= 10:
+                    status = "GOOD"
+                    print(f"Extracted SIDE cow_{cow_id[-1]}: frames {side_start} to {side_end} (total: {segment_length} frames, status: {status})")
+                else:
+                    status = "TOO_SHORT"
+                    print(f"SIDE cow_{cow_id[-1]}: insufficient frames ({segment_length} < 10, status: {status})")
+                
+                segments[cow_id] = {
+                    'frames': side_frames,
+                    'Flagged': status
+                }
+        
+        return segments    
+        
     def display_all(self, frame_delay=-1):
         frame_count = 0
-        top_path, const = self.view_paths['top']
-        side_path, const = self.view_paths['side']
-        front_path, const = self.view_paths['front']
+        top_path, top_const = self.view_paths['top']
+        side_path, side_const = self.view_paths['side']
+        front_path, front_const = self.view_paths['front']
         
         front_cam = cv2.VideoCapture(front_path)
         side_cam = cv2.VideoCapture(side_path)
@@ -179,6 +348,258 @@ class Segmenter:
         top_cam.release()
         
         print(f"Frame Count: {frame_count}")
+        
+    def test_background_sub(self, view='top'):
+        background_path = f"data/processed/session_1/background_{view}.jpg"
+        video_path, const = self.view_paths[view]
+        
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise ValueError(f"Could not open video: {video_path}")
+        
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                cap.release()
+                raise ValueError(f"Could not read frame from {video_path}")
+        
+        
+            sliced_frame = self.slice(frame, camera=const)
+            subtracted_frame = self.background_subtract(background_path, sliced_frame)
+            
+            current_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
+            
+            #Thresholding image to make the movement more detectable, should be adjusted later
+            #Threshold value
+            #Noting Thresholding values for top view
+            #70: good, 100: gets rid of the fence gate and lot of details of cow
+            if view == 'top':
+                thresh = 75
+            elif view == 'front':
+                thresh = 50
+            cv2.threshold(subtracted_frame, thresh, 255, cv2.THRESH_BINARY, dst=subtracted_frame)
+            
+            active_pixels = cv2.countNonZero(cv2.cvtColor(subtracted_frame, cv2.COLOR_BGR2GRAY))
+            
+            #IF more than 5000 pixels are active, then assume movement
+            if(view == 'top' and active_pixels > 5000) or (view == 'front' and active_pixels > 3000):
+                cv2.imshow("Subtracted Frame", subtracted_frame)
+                print(f"Active Pixels: {active_pixels}, Frame: {current_frame}")
+                
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+            
+    def extract_segments(self, view, output_dir, session_id, min_frames=25, max_frames=65, front_segments=None):
+        """
+        Extracts segments from video where motion is detected, filtering for single cow segments.
+        
+        For 'side' view: Takes the last 50 frames before each front segment start.
+        For 'top' and 'front' views: Uses background subtraction and motion detection.
+        
+        Args:
+            view (str): 'top', 'side', or 'front' to specify which camera view to process.
+            output_dir (str): Base output directory where segmented images will be saved.
+            session_id (str): Session identifier to determine the correct session folder.
+            min_frames (int): Minimum frame count for a valid segment (default: 25).
+            max_frames (int): Maximum frame count for a valid segment (default: 65).
+            front_segments (dict): Optional. Front camera segments to use for side view extraction.
+            
+        Returns:
+            dict: Dictionary of cow segments with format:
+                  {'cow_0': {'frames': [frame_list], 'Flagged': 'GOOD'/'TOO_SHORT'/'TOO_LONG'}, ...}
+        """
+        view = view.lower()
+        if view not in self.view_paths:
+            raise ValueError(f"Invalid view: {view}. Must be 'top', 'side', or 'front'")
+        
+        # Handle side view extraction using front segments
+        if view == 'side':
+            if front_segments is None:
+                raise ValueError("Side view extraction requires front_segments parameter")
+            return self._extract_side_segments(front_segments)
+        
+        # Set threshold based on view
+        if view == 'top':
+            thresh = 75
+        elif view == 'front':
+            thresh = 50
+        else:
+            raise ValueError(f"Invalid view: {view}. Must be 'top', 'side', or 'front'")
+        
+        background_path = f"{output_dir}/{session_id}/background_{view}.jpg"
+        video_path, video_const = self.view_paths[view]
+        
+        cam = cv2.VideoCapture(video_path)
+        if not cam.isOpened():
+            raise ValueError(f"Could not open video: {video_path}")
+        
+        cow_in_frames = []
+        segments = {}
+        cow_counter = 0
+        motion_frame_count = 0  # Track for debugging
+        
+        while True:
+            ret, frame = cam.read()
+            
+            if not ret:  # Graceful exit at end of video
+                break
+            
+            # Get frame position BEFORE incrementing
+            curr_frame = int(cam.get(cv2.CAP_PROP_POS_FRAMES))
+            
+            sliced_frame = self.slice(frame, camera=video_const)
+            subtracted_frame = self.background_subtract(background_path, sliced_frame)
+            
+            cv2.threshold(subtracted_frame, thresh, 255, cv2.THRESH_BINARY, dst=subtracted_frame)
+            active_pixels = cv2.countNonZero(cv2.cvtColor(subtracted_frame, cv2.COLOR_BGR2GRAY))
+            
+            motion_detected = (view == 'top' and active_pixels > 5000) or (view == 'front' and active_pixels > 3000)
+            
+            if motion_detected:
+                motion_frame_count += 1
+                cow_in_frames.append(curr_frame)
+            else:
+                # If we were tracking a cow and motion stopped, save it
+                if cow_in_frames:
+                    segment_length = len(cow_in_frames)
+                    if min_frames <= segment_length <= max_frames:
+                        status = "GOOD"
+                        print(f"Saved cow_{cow_counter}: frames {cow_in_frames[0]} to {cow_in_frames[-1]} (total: {segment_length} frames, status: {status})")
+                    else:
+                        status = "TOO_SHORT" if segment_length < min_frames else "TOO_LONG"
+                        print(f"Saved cow_{cow_counter}: frames {cow_in_frames[0]} to {cow_in_frames[-1]} (total: {segment_length} frames, status: {status})")
+                    
+                    segments[f"cow_{cow_counter}"] = {
+                        'frames': cow_in_frames,
+                        'Flagged': status
+                    }
+                    cow_counter += 1
+                    cow_in_frames = []
+        
+        # Save any remaining segment after loop ends
+        if cow_in_frames:
+            segment_length = len(cow_in_frames)
+            if min_frames <= segment_length <= max_frames:
+                status = "GOOD"
+                print(f"Saved cow_{cow_counter}: frames {cow_in_frames[0]} to {cow_in_frames[-1]} (total: {segment_length} frames, status: {status})")
+            else:
+                status = "TOO_SHORT" if segment_length < min_frames else "TOO_LONG"
+                print(f"Saved cow_{cow_counter}: frames {cow_in_frames[0]} to {cow_in_frames[-1]} (total: {segment_length} frames, status: {status})")
+            
+            segments[f"cow_{cow_counter}"] = {
+                'frames': cow_in_frames,
+                'Flagged': status
+            }
+        
+        cam.release()
+        print(f"\nTotal frames with motion detected: {motion_frame_count}")
+        print(f"Total segments found: {len(segments)}")
+        
+        return segments
+                    
+    def visualize_segments(self, metadata, view):
+        """
+        Visualizes detected segments from metadata by playing the video and highlighting frames with detected motion.
+        
+        Args:
+            metadata (dict): Metadata dictionary with structure:
+                           {
+                             'segments': {
+                               'cow_0': {'top': {...}, 'front': {...}, 'side': {...}},
+                               ...
+                             }
+                           }
+            view (str): 'top', 'side', or 'front' to specify which camera view to visualize.
+        """
+        view = view.lower()
+        if view not in self.view_paths:
+            raise ValueError(f"Invalid view: {view}. Must be 'top', 'side', or 'front'")
+        
+        video_path, video_const = self.view_paths[view]
+        cam = cv2.VideoCapture(video_path)
+        
+        if not cam.isOpened():
+            raise ValueError(f"Could not open video: {video_path}")
+        
+        # Create sets of frames for the specified view
+        valid_frames = set()
+        
+        # Extract frames from metadata for the specified view
+        segments = metadata.get('segments', {})
+        for cow_id, views_data in segments.items():
+            if view in views_data:
+                segment_info = views_data[view]
+                start_frame = segment_info['start_frame']
+                end_frame = segment_info['end_frame']
+                # Add all frames in this range
+                for frame_num in range(start_frame, end_frame + 1):
+                    valid_frames.add(frame_num)
+        
+        # Print summary
+        print(f"\n{'='*60}")
+        print(f"SEGMENT VISUALIZATION: {view.upper()} VIEW")
+        print(f"{'='*60}")
+        print("SEGMENTS:")
+        for cow_id, views_data in segments.items():
+            if view in views_data:
+                segment_info = views_data[view]
+                start_frame = segment_info['start_frame']
+                end_frame = segment_info['end_frame']
+                duration = segment_info['duration']
+                status = segment_info.get('Flagged', 'UNKNOWN')
+                print(f"  {cow_id}: Frames {start_frame:5d} - {end_frame:5d} (Duration: {duration:4d} frames, Status: {status})")
+        print(f"{'='*60}\n")
+        
+        frame_count = 0
+        while True:
+            ret, frame = cam.read()
+            if not ret:
+                break
+            
+            frame_count += 1
+            current_pos = int(cam.get(cv2.CAP_PROP_POS_FRAMES))
+            
+            # Resize for display
+            display_frame = cv2.resize(frame, (640, 480))
+            
+            # Check frame type and set appropriate border color
+            if current_pos in valid_frames:
+                # Draw green border for valid segments
+                cv2.rectangle(display_frame, (5, 5), (635, 475), (0, 255, 0), 3)
+                status = "VALID MOTION"
+                color = (0, 255, 0)
+            else:
+                # Draw red border for no motion
+                cv2.rectangle(display_frame, (5, 5), (635, 475), (0, 0, 255), 3)
+                status = "NO MOTION"
+                color = (0, 0, 255)
+            
+            # Add text overlay
+            cv2.putText(display_frame, f"Frame: {current_pos}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(display_frame, f"Status: {status}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+            
+            cv2.imshow(f"{view.upper()} View - Segment Visualization", display_frame)
+            
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q'):
+                print("Visualization stopped by user")
+                break
+            elif key == ord(' '):
+                # Space to pause/play
+                print("Paused. Press SPACE again to continue, Q to quit")
+                while True:
+                    key = cv2.waitKey(0) & 0xFF
+                    if key == ord(' '):
+                        break
+                    elif key == ord('q'):
+                        cam.release()
+                        cv2.destroyAllWindows()
+                        return
+        
+        cam.release()
+        cv2.destroyAllWindows()
+        print("Visualization complete!")
+            
                     
             
     def show(self, frame):
@@ -210,6 +631,78 @@ class Segmenter:
                 return (frame[self.SIDE_Y_START:self.SIDE_Y_END,self.SIDE_X_START:self.SIDE_X_END,:])
         except:
             raise ValueError("Value error of frame received, cannot slice frame!")
+
+    def run_full_pipeline(self, session_id, output_dir, background_frame_numbers=None, visualize=False, views_to_visualize=None):
+        """
+        Runs the complete cow gait analysis pipeline: captures backgrounds, extracts segments,
+        aggregates metadata, saves to file, and optionally visualizes results.
+        
+        Args:
+            session_id (str): Session identifier
+            output_dir (str): Base output directory for processed data
+            background_frame_numbers (dict): Frame numbers for background capture per view.
+                                          Defaults to {'top': 0, 'front': 0} (side not needed)
+            visualize (bool): Whether to visualize segments after processing
+            views_to_visualize (list): List of views to visualize if visualize=True.
+                                     Defaults to ['top', 'front', 'side']
+        """
+        if background_frame_numbers is None:
+            background_frame_numbers = {'top': 0, 'front': 0}  # Side doesn't use background subtraction
+        
+        if views_to_visualize is None:
+            views_to_visualize = ['top', 'front', 'side']
+        
+        print(f"\n{'='*60}")
+        print(f"STARTING COW SEGMENTATION FOR ANALYSIS - Session: {session_id}")
+        print(f"{'='*60}")
+        
+        # Create session directory
+        session_dir = os.path.join(output_dir, session_id)
+        os.makedirs(session_dir, exist_ok=True)
+        print(f"Created session directory: {session_dir}")
+        
+        # 1. Capture background frames for views that need it (top and front only)
+        print("\n1. CAPTURING BACKGROUND FRAMES...")
+        for view in ['top', 'front']:  # Skip side - it uses temporal alignment instead
+            frame_num = background_frame_numbers.get(view, 0)
+            self.capture_background_frame(view, frame_num, output_dir, session_id)
+        
+        # 2. Create base metadata structure
+        print("\n2. CREATING BASE METADATA STRUCTURE...")
+        metadata = self.create_base_metadata(session_id)
+        
+        # 3. Aggregate segments from all three views
+        print("\n3. EXTRACTING AND AGGREGATING SEGMENTS...")
+        aggregated_segments = self.aggregate_segments(output_dir, session_id)
+        
+        # 4. Add aggregated segments to metadata
+        metadata['segments'] = aggregated_segments
+        
+        # 5. Save complete metadata to file
+        print("\n4. SAVING METADATA TO FILE...")
+        metadata_path = self.save_metadata(metadata, output_dir, session_id)
+        
+        # 6. Optional visualization
+        if visualize:
+            print("\n5. VISUALIZING SEGMENTS...")
+            # Load the saved metadata
+            with open(metadata_path, 'r') as f:
+                loaded_metadata = json.load(f)
+            
+            # Visualize specified views
+            for view in views_to_visualize:
+                if view in ['top', 'side', 'front']:
+                    print(f"\nVisualizing {view.upper()} view...")
+                    self.visualize_segments(loaded_metadata, view)
+                else:
+                    print(f"Warning: Invalid view '{view}' for visualization. Skipping.")
+        
+        print(f"\n{'='*60}")
+        print(f"PIPELINE COMPLETE - Session: {session_id}")
+        print(f"Metadata saved to: {metadata_path}")
+        print(f"{'='*60}")
+        
+        return metadata_path
 
 class Cleanup:
     def __init__(self):
@@ -282,11 +775,23 @@ cleaner = Cleanup()
 
 
 # seg.display_all(frame_delay=0.5)
-seg.capture_background_frame(camera_view='top', frame_number=2000, output_dir="data/processed", session_id="session_1")
-seg.create_cow_folders(output_dir="data/processed", session_id="session_1", cow_id="cow_1")
-seg.create_cow_folders(output_dir="data/processed", session_id="session_1", cow_id="cow_2")
-seg.create_cow_folders(output_dir="data/processed", session_id="session_1", cow_id="cow_3")
+# seg.capture_background_frame(camera_view='front', frame_number=0, output_dir="data/processed", session_id="session_1")
+# seg.create_cow_folders(output_dir="data/processed", session_id="session_1", cow_id="cow_1")
+# seg.create_cow_folders(output_dir="data/processed", session_id="session_1", cow_id="cow_2")
+# seg.create_cow_folders(output_dir="data/processed", session_id="session_1", cow_id="cow_3")
 
 # cleaner.remove_cow_folders(output_dir="data/processed", session_id="session_1", cow_id="cow_1") 
-cleaner.remove_all(output_dir="data/processed", session_id="session_1", remove_session_folder=True)
+# cleaner.remove_all(output_dir="data/processed", session_id="session_1", remove_session_folder=True)
     
+# seg.test_background_sub("front")
+# seg.display_all()
+
+# ===== OPTIMIZED PIPELINE =====
+# Run the complete cow gait analysis pipeline
+metadata_path = seg.run_full_pipeline(
+    session_id="session_1",
+    output_dir="data/processed",
+    background_frame_numbers={'top': 0, 'front': 0},  # Side doesn't need background
+    visualize=True,
+    views_to_visualize=['side']  # Only visualize side view as in original
+)
