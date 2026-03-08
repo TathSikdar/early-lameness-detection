@@ -807,7 +807,7 @@ seg = Segmenter()
 
 # ===== OPTIMIZED PIPELINE =====
 # Run the complete cow gait analysis pipeline
-seg.test_background_sub("front")
+seg.visualize_segments(metadata_path="data/processed/session_1/metadata_session_1.json", view='top')
 # metadata_path = seg.run_full_pipeline(
 #     session_id="session_1",
 #     output_dir="data/processed",

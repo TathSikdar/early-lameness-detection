@@ -300,7 +300,7 @@ class EarTagIDExtraction:
                     continue
             file.close()            
             
-    def flag_wrong_format(self, stard, end):
+    def flag_wrong_format(self, start, end):
         #This method will show which bounding box was kept during the cleaning process. 
         #The user can either press <
         format_to_change = []
