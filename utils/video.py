@@ -144,8 +144,17 @@ class Segmenter:
     
     def aggregate_segments(self, output_dir, session_id):
         """
-        Extracts segments from all three camera views and aggregates them by cow ID.
-        Applies the 125-frame offset for the side camera (5 seconds * 25 fps).
+        Extracts segments from all three camera views and matches them by temporal alignment.
+        Ensures that only compatible flag combinations are paired.
+        
+        Allowed front/top combinations:
+        - GOOD + GOOD
+        - GOOD + TOO_LONG
+        - TOO_LONG + GOOD
+        - TOO_LONG + TOO_LONG
+        
+        NOT allowed (segments are skipped):
+        - Any combination with TOO_SHORT
         
         Args:
             output_dir (str): Base output directory
@@ -159,42 +168,118 @@ class Segmenter:
                     ...
                   }
         """
-        aggregated_segments = {}
-        front_segments_data = None
+        print(f"\n{'='*60}")
+        print("MATCHING SEGMENTS FROM TOP AND FRONT VIEWS")
+        print(f"{'='*60}")
         
-        # Extract segments from all three views (process front first for side extraction)
-        for view in ['front', 'top', 'side']:
-            print(f"\nExtracting segments from {view.upper()} view...")
+        # Extract all segments from front and top views
+        print("\nExtracting segments from FRONT view...")
+        front_segments_raw = self.extract_segments('front', output_dir, session_id)
+        
+        print("\nExtracting segments from TOP view...")
+        top_segments_raw = self.extract_segments('top', output_dir, session_id)
+        
+        # Filter out TOO_SHORT segments - keep only GOOD and TOO_LONG
+        front_valid = []
+        for cow_id, segment_data in front_segments_raw.items():
+            if segment_data['Flagged'] != 'TOO_SHORT':
+                front_valid.append({
+                    'original_id': cow_id,
+                    'frames': segment_data['frames'],
+                    'Flagged': segment_data['Flagged']
+                })
+        
+        top_valid = []
+        for cow_id, segment_data in top_segments_raw.items():
+            if segment_data['Flagged'] != 'TOO_SHORT':
+                top_valid.append({
+                    'original_id': cow_id,
+                    'frames': segment_data['frames'],
+                    'Flagged': segment_data['Flagged']
+                })
+        
+        print(f"\nFront segments (after filtering TOO_SHORT): {len(front_valid)}")
+        print(f"Top segments (after filtering TOO_SHORT): {len(top_valid)}")
+        
+        # Match segments temporally
+        aggregated_segments = {}
+        matched_pairs = []
+        
+        # Check if we have matching counts
+        if len(front_valid) != len(top_valid):
+            print(f"\nWARNING: Front and top have different segment counts ({len(front_valid)} vs {len(top_valid)})")
+            print("Matching by sequential order (fewer segments determine count)...")
+        
+        # Match by sequential order (pair front[i] with top[i])
+        num_pairs = min(len(front_valid), len(top_valid))
+        
+        for i in range(num_pairs):
+            front_seg = front_valid[i]
+            top_seg = top_valid[i]
             
-            # For side view, pass front segments
-            if view == 'side':
-                if front_segments_data is None:
-                    print("ERROR: Front segments not yet extracted, cannot extract side segments")
-                    continue
-                segments_data = self.extract_segments(view, output_dir, session_id, front_segments=front_segments_data)
-            else:
-                segments_data = self.extract_segments(view, output_dir, session_id)
+            # Check flag compatibility
+            front_flag = front_seg['Flagged']
+            top_flag = top_seg['Flagged']
+            valid_flags = {'GOOD', 'TOO_LONG'}
             
-            # Store front segments for later use with side extraction
-            if view == 'front':
-                front_segments_data = segments_data
+            if front_flag not in valid_flags or top_flag not in valid_flags:
+                print(f"\nSKIP pair {i}: Invalid flags - Front={front_flag}, Top={top_flag}")
+                continue
             
-            # Aggregate segments by cow_id
-            for cow_id, segment_data in segments_data.items():
-                frames = segment_data['frames']
-                status = segment_data['Flagged']
-                
-                # Initialize cow entry if it doesn't exist
-                if cow_id not in aggregated_segments:
-                    aggregated_segments[cow_id] = {}
-                
-                # Store the segment data for this view
-                aggregated_segments[cow_id][view] = {
-                    'start_frame': frames[0],
-                    'end_frame': frames[-1],
-                    'duration': len(frames),
-                    'Flagged': status
+            cow_id = f"cow_{len(matched_pairs)}"
+            matched_pairs.append((cow_id, front_seg, top_seg))
+            
+            print(f"\nMATCH {cow_id}:")
+            print(f"  Front: {front_seg['original_id']} (Flag: {front_flag})")
+            print(f"  Top:   {top_seg['original_id']} (Flag: {top_flag})")
+        
+        # Create aggregated segments from matched pairs
+        for cow_id, front_seg, top_seg in matched_pairs:
+            aggregated_segments[cow_id] = {
+                'front': {
+                    'start_frame': front_seg['frames'][0],
+                    'end_frame': front_seg['frames'][-1],
+                    'duration': len(front_seg['frames']),
+                    'Flagged': front_seg['Flagged']
+                },
+                'top': {
+                    'start_frame': top_seg['frames'][0],
+                    'end_frame': top_seg['frames'][-1],
+                    'duration': len(top_seg['frames']),
+                    'Flagged': top_seg['Flagged']
                 }
+            }
+        
+        # Extract side segments based on the matched front segments
+        if aggregated_segments:
+            print(f"\nExtracting segments from SIDE view...")
+            # Prepare front segments data for side extraction (needs frames as a list starting with start frame)
+            front_for_side = {}
+            for cow_id, seg in aggregated_segments.items():
+                front_start = seg['front']['start_frame']
+                front_end = seg['front']['end_frame']
+                front_for_side[cow_id] = {
+                    'frames': list(range(front_start, front_end + 1)),
+                    'Flagged': seg['front']['Flagged']
+                }
+            
+            side_segments_raw = self.extract_segments('side', output_dir, session_id, 
+                                                      front_segments=front_for_side)
+            
+            # Add side segments to aggregated segments
+            for cow_id, segment_data in side_segments_raw.items():
+                if cow_id in aggregated_segments:
+                    aggregated_segments[cow_id]['side'] = {
+                        'start_frame': segment_data['frames'][0],
+                        'end_frame': segment_data['frames'][-1],
+                        'duration': len(segment_data['frames']),
+                        'Flagged': segment_data['Flagged']
+                    }
+        
+        print(f"\n{'='*60}")
+        print(f"Total matched cow pairs: {len(matched_pairs)}")
+        print(f"Total cows with all views: {len(aggregated_segments)}")
+        print(f"{'='*60}\n")
         
         return aggregated_segments
     
@@ -374,7 +459,7 @@ class Segmenter:
             #Noting Thresholding values for top view
             #70: good, 100: gets rid of the fence gate and lot of details of cow
             if view == 'top':
-                thresh = 75
+                thresh = 100
             elif view == 'front':
                 thresh = 50
             cv2.threshold(subtracted_frame, thresh, 255, cv2.THRESH_BINARY, dst=subtracted_frame)
@@ -704,74 +789,8 @@ class Segmenter:
         
         return metadata_path
 
-class Cleanup:
-    def __init__(self):
-        pass
-    
-    def remove_cow_folders(self, output_dir, session_id, cow_id):
-        """
-        Removes the subfolders created for a cow's segmented data.
-        
-        Input:
-            output_dir (str): Base output directory.
-            session_id (str): Session identifier.
-            cow_id (str): Cow identifier.
-        
-        Removes folders: output_dir/session_id/cow_id/front, /top, /side, /ear_tag
-        """
-        cow_dir = os.path.join(output_dir, session_id, cow_id)
-        folders = ['front', 'top', 'side', 'ear_tag']
-        
-        for folder in folders:
-            folder_path = os.path.join(cow_dir, folder)
-            if os.path.exists(folder_path):
-                shutil.rmtree(folder_path)
-                print(f"Removed folder: {folder_path}")
-            else:
-                print(f"Folder does not exist: {folder_path}")
-        
-        # Optionally remove the cow_dir if empty
-        try:
-            os.rmdir(cow_dir)
-            print(f"Removed empty cow directory: {cow_dir}")
-        except OSError:
-            print(f"Cow directory not empty or does not exist: {cow_dir}")
-            
-    
-            
-    
-    def remove_all(self, output_dir, session_id, remove_session_folder=False):
-        """
-        Remove every cow folder under a session. Optionally delete the session directory itself.
-        
-        This implementation leverages ``remove_cow_folders`` to ensure
-        consistent cleanup logic for each cow.
-        
-        Args:
-            output_dir (str): Base output directory.
-            session_id (str): Session identifier.
-            remove_session_folder (bool): if True, delete the session folder after cleaning.
-        """
-        session_dir = os.path.join(output_dir, session_id)
-        if not os.path.exists(session_dir):
-            print(f"Session directory does not exist: {session_dir}")
-            return
-        
-        # delete all cows inside using existing helper
-        for item in os.listdir(session_dir):
-            cow_dir = os.path.join(session_dir, item)
-            if os.path.isdir(cow_dir):
-                self.remove_cow_folders(output_dir, session_id, item)
-        
-        if remove_session_folder:
-            try:
-                shutil.rmtree(session_dir)
-                print(f"Removed session directory: {session_dir}")
-            except OSError:
-                print(f"Could not remove session directory (not empty?): {session_dir}")
-    
+
 seg = Segmenter()
-cleaner = Cleanup()
 
 
 # seg.display_all(frame_delay=0.5)
@@ -788,10 +807,11 @@ cleaner = Cleanup()
 
 # ===== OPTIMIZED PIPELINE =====
 # Run the complete cow gait analysis pipeline
-metadata_path = seg.run_full_pipeline(
-    session_id="session_1",
-    output_dir="data/processed",
-    background_frame_numbers={'top': 0, 'front': 0},  # Side doesn't need background
-    visualize=True,
-    views_to_visualize=['side']  # Only visualize side view as in original
-)
+seg.test_background_sub("front")
+# metadata_path = seg.run_full_pipeline(
+#     session_id="session_1",
+#     output_dir="data/processed",
+#     background_frame_numbers={'top': 0, 'front': 0},  # Side doesn't need background
+#     visualize=True,
+#     views_to_visualize=['side']  # Only visualize side view as in original
+# )
