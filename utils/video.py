@@ -1,9 +1,7 @@
 import cv2
 import matplotlib.pyplot as plt
 import time as tm
-import numpy as np
 import os
-import shutil
 import json
 
 TOP = 0
@@ -253,18 +251,18 @@ class Segmenter:
         # Extract side segments based on the matched front segments
         if aggregated_segments:
             print(f"\nExtracting segments from SIDE view...")
-            # Prepare front segments data for side extraction (needs frames as a list starting with start frame)
-            front_for_side = {}
+            # Prepare top segments data for side extraction (needs frames as a list starting with start frame)
+            top_for_side = {}
             for cow_id, seg in aggregated_segments.items():
-                front_start = seg['front']['start_frame']
-                front_end = seg['front']['end_frame']
-                front_for_side[cow_id] = {
-                    'frames': list(range(front_start, front_end + 1)),
-                    'Flagged': seg['front']['Flagged']
+                top_start = seg['top']['start_frame']
+                top_end = seg['top']['end_frame']
+                top_for_side[cow_id] = {
+                    'frames': list(range(top_start, top_end + 1)),
+                    'Flagged': seg['top']['Flagged']
                 }
             
             side_segments_raw = self.extract_segments('side', output_dir, session_id, 
-                                                      front_segments=front_for_side)
+                                                      top_segments=top_for_side)
             
             # Add side segments to aggregated segments
             for cow_id, segment_data in side_segments_raw.items():
@@ -308,13 +306,14 @@ class Segmenter:
         
         print(f"\nMetadata saved to: {metadata_path}")
         return metadata_path    
-    def _extract_side_segments(self, front_segments):
+    def _extract_side_segments(self, top_segments):
         """
-        Helper function to extract side camera segments based on front camera segments.
-        Takes 10 frames starting 40 frames before each front segment start.
+        Helper function to extract side camera segments based on top camera segments.
+        Takes 10 frames starting 40 frames before each top segment start.
         
+        Top Segments extraction is more accurate and hence this was used to extract the side segments
         Args:
-            front_segments (dict): Dictionary of front camera segments with format:
+            top_segments (dict): Dictionary of top camera segments with format:
                                   {'cow_0': {'frames': [...], 'Flagged': '...'}, ...}
         
         Returns:
@@ -323,13 +322,13 @@ class Segmenter:
         """
         segments = {}
         
-        for cow_id, segment_data in front_segments.items():
+        for cow_id, segment_data in top_segments.items():
             frames = segment_data['frames']
             if frames:
-                front_start = frames[0]
-                # Side segment: 10 frames starting 40 frames before front start
-                side_start = max(1, front_start - 40)  # Ensure we don't go below frame 1
-                side_end = front_start - 31  # 10 frames: from 40 to 31 frames before
+                top_start = frames[0]
+                # Side segment: 10 frames starting 40 frames before top start
+                side_start = max(1, top_start - 40)  # Ensure we don't go below frame 1
+                side_end = top_start - 31  # 10 frames: from 40 to 31 frames before
                 
                 # Create side segment frames list
                 side_frames = list(range(side_start, side_end + 1))
@@ -350,7 +349,7 @@ class Segmenter:
         
         return segments    
         
-    def display_all(self, frame_delay=-1):
+    def display_all(self, frame_delay=-1, start_frame = 0):
         frame_count = 0
         top_path, top_const = self.view_paths['top']
         side_path, side_const = self.view_paths['side']
@@ -359,6 +358,12 @@ class Segmenter:
         front_cam = cv2.VideoCapture(front_path)
         side_cam = cv2.VideoCapture(side_path)
         top_cam = cv2.VideoCapture(top_path)
+        
+        #Start frame 
+        front_cam.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+        side_cam.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+        top_cam.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+        
         
         #Get the total numbers for frames from the metadata of the file
         front_count = int(front_cam.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -474,11 +479,11 @@ class Segmenter:
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
             
-    def extract_segments(self, view, output_dir, session_id, min_frames=25, max_frames=65, front_segments=None):
+    def extract_segments(self, view, output_dir, session_id, min_frames=25, max_frames=65, top_segments=None):
         """
         Extracts segments from video where motion is detected, filtering for single cow segments.
         
-        For 'side' view: Takes the last 50 frames before each front segment start.
+        For 'side' view: Takes the last 50 frames before each top segment start.
         For 'top' and 'front' views: Uses background subtraction and motion detection.
         
         Args:
@@ -497,11 +502,11 @@ class Segmenter:
         if view not in self.view_paths:
             raise ValueError(f"Invalid view: {view}. Must be 'top', 'side', or 'front'")
         
-        # Handle side view extraction using front segments
+        # Handle side view extraction using top segments
         if view == 'side':
-            if front_segments is None:
-                raise ValueError("Side view extraction requires front_segments parameter")
-            return self._extract_side_segments(front_segments)
+            if top_segments is None:
+                raise ValueError("Side view extraction requires top_segments parameter")
+            return self._extract_side_segments(top_segments)
         
         # Set threshold based on view
         if view == 'top':
@@ -788,6 +793,30 @@ class Segmenter:
         print(f"{'='*60}")
         
         return metadata_path
+    
+    def demo_display(self, start_frame=0, view="top"):
+        path = f"data/raw/{view}/{view}.mp4"
+        background_path = f"data/processed/session_1/background_top.jpg"
+        
+        cam = cv2.VideoCapture(path)
+        
+        cam.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+        
+        ret, frame = cam.read()
+        sliced_frame = self.slice(frame=frame, camera=TOP)
+        subtracted_frame = self.background_subtract(frame=sliced_frame, background_path=background_path)
+        
+        thresh = 100
+        cv2.threshold(subtracted_frame, thresh, 255, cv2.THRESH_BINARY, dst=subtracted_frame)
+        
+        active_pixels = cv2.countNonZero(cv2.cvtColor(subtracted_frame, cv2.COLOR_BGR2GRAY))
+        
+        
+        cv2.imshow("Frame", subtracted_frame)
+        print(f"Active Pixels: {active_pixels}")
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+        
 
 
 seg = Segmenter()
@@ -807,7 +836,13 @@ seg = Segmenter()
 
 # ===== OPTIMIZED PIPELINE =====
 # Run the complete cow gait analysis pipeline
-seg.visualize_segments(metadata_path="data/processed/session_1/metadata_session_1.json", view='top')
+# metadat_path = "data/processed/session_1/metadata_session_1.json"
+# with open(metadat_path, "r") as f:
+#     loaded_metadata = json.load(f)
+    
+# f.close()
+
+# seg.visualize_segments(metadata=loaded_metadata, view='top')
 # metadata_path = seg.run_full_pipeline(
 #     session_id="session_1",
 #     output_dir="data/processed",
@@ -815,3 +850,6 @@ seg.visualize_segments(metadata_path="data/processed/session_1/metadata_session_
 #     visualize=True,
 #     views_to_visualize=['side']  # Only visualize side view as in original
 # )
+# seg.display_all(frame_delay=0.2)
+# seg.demo_display(start_frame=1980, view="front")
+# seg.capture_background_frame(camera_view="front", frame_number=0, output_dir="data/processed", session_id="session_1")

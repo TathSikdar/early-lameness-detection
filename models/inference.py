@@ -4,6 +4,8 @@ import re
 import os
 import matplotlib.pylab as plt
 from matplotlib.gridspec import GridSpec
+from ultralytics import YOLO
+import pandas as pd
 
 #The Model has been trained on the CEID-D Dataset sourced from Kaggle which has a collection of images of cows with ear tags labeled.
 #Current model is traind on the full color image, revisit this in the future and decide if training on grayscale images would be better.
@@ -424,3 +426,85 @@ detection_model = EarTagDectionAndLocaliztion()
 # ocr.flag_wrong_format(start, end)
 # # ocr.easy_ocr()
 # # ocr.paddle_ocr()
+
+
+class PoseEstimation:
+    """
+    Class for cow pose estimation using YOLOv8-pose or similar model.
+    Extracts keypoints for gait analysis.
+    """
+    
+    def __init__(self, model_path='yolov8n-pose.pt'):
+        """
+        Initialize the pose estimation model.
+        For cows, we may need a custom model, but starting with general pose.
+        """
+        self.model = None
+        self.model_path = model_path
+
+        if not os.path.exists(model_path):
+            print(f"WARNING: pose model not found at {model_path}. Please download it or set the correct path.")
+            return
+
+        try:
+            self.model = YOLO(model_path)
+        except Exception as e:
+            print(f"ERROR: failed to load YOLO model from {model_path}: {e}")
+            self.model = None
+    
+    def estimate_pose(self, image_path):
+        """
+        Estimate pose from a single image.
+        Returns keypoints as numpy array.
+        """
+        if self.model is None:
+            raise RuntimeError('Pose model not loaded.')
+
+        results = self.model(image_path)
+        if not results or len(results) == 0 or not hasattr(results[0], 'keypoints') or results[0].keypoints is None:
+            print(f"[WARN] No pose detected in image: {image_path}")
+            return None
+        keypoints = results[0].keypoints.xy.cpu().numpy()
+        if keypoints.shape[0] == 0:
+            print(f"[WARN] Detected object, but no keypoints found in: {image_path}")
+            return None
+        return keypoints[0]  # (17, 2)
+    
+    def estimate_pose_video(self, video_path, output_csv=None):
+        """
+        Estimate pose for each frame in video and save to CSV.
+        Format: video_name,frame,x1,y1,x2,y2,... for each keypoint.
+        """
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise ValueError("Cannot open video")
+        
+        frame_count = 0
+        keypoints_list = []
+        
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            
+            # Save frame temporarily for inference
+            temp_img = f"temp_frame_{frame_count}.jpg"
+            cv2.imwrite(temp_img, frame)
+            
+            keypoints = self.estimate_pose(temp_img)
+            if keypoints is not None:
+                # Flatten keypoints
+                kp_flat = keypoints.flatten()
+                row = [os.path.basename(video_path), frame_count] + kp_flat.tolist()
+                keypoints_list.append(row)
+            
+            os.remove(temp_img)
+            frame_count += 1
+        
+        cap.release()
+        
+        if output_csv:
+            df = pd.DataFrame(keypoints_list)
+            df.to_csv(output_csv, index=False, header=False)
+        
+        return keypoints_list

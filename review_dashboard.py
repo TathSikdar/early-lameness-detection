@@ -1,6 +1,8 @@
 import streamlit as st
 import os
 import base64
+from models.architecture import AnomalyDetector
+from utils.metrics import GaitData
 
 st.set_page_config(layout="wide")
 
@@ -37,6 +39,16 @@ if "total_cows" not in st.session_state:
 # Default lameness score of 10 means "not yet scored"
 if "user_lameness_score" not in st.session_state:
     st.session_state.user_lameness_score = [10] * st.session_state.total_cows
+
+# Load anomaly model
+if "anomaly_model" not in st.session_state:
+    model_path = "models/anomaly_model.pkl"
+    if os.path.exists(model_path):
+        detector = AnomalyDetector()
+        detector.load_model(model_path)
+        st.session_state.anomaly_model = detector
+    else:
+        st.session_state.anomaly_model = None
 
 
 # ─────────────────────────────────────────────
@@ -119,12 +131,29 @@ elif st.session_state.page == "review":
 
     # ── Model Scores ──
     st.subheader("🤖 Model Predictions")
-    lameness_score = 1   # TODO: replace with ML pipeline output
-    confidence_score = 2  # TODO: replace with ML pipeline output
+    
+    predicted_score = 0
+    confidence = 0
+    if st.session_state.anomaly_model:
+        keypoints_csv = os.path.join(current_cow_path, "keypoints.csv")
+        if os.path.exists(keypoints_csv):
+            try:
+                gait = GaitData(keypoints_csv)
+                features = gait.extract_features()
+                anomaly_score = st.session_state.anomaly_model.predict(features)
+                # Map anomaly score (0-1) to lameness (0-5)
+                predicted_score = int(anomaly_score * 5)
+                confidence = 1 - anomaly_score  # Higher confidence for normal
+            except Exception as e:
+                st.warning(f"Error computing prediction: {e}")
+        else:
+            st.info("No keypoints available for prediction")
+    else:
+        st.info("Anomaly model not trained yet")
 
     col_lame, col_conf = st.columns(2)
-    col_lame.metric("Model Lameness Score", lameness_score)
-    col_conf.metric("Model Confidence Score", confidence_score)
+    col_lame.metric("Model Lameness Score", predicted_score)
+    col_conf.metric("Model Confidence Score", f"{confidence:.2f}")
 
     st.divider()
 
