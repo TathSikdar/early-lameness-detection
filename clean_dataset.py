@@ -1,3 +1,68 @@
+def pad_label_filenames_to_six_digits(pose_root):
+	"""
+	Renames label files in images/labels for train and val splits in the Pose dataset so that the frame number is always 6 digits (e.g., 02_000031.txt).
+	This ensures label and image filenames match for YOLO.
+	"""
+	for split in ["train", "val"]:
+		label_dir = os.path.join(pose_root, split, "labels")
+		if not os.path.isdir(label_dir):
+			continue
+		for fname in os.listdir(label_dir):
+			if not fname.endswith(".txt"):
+				continue
+			parts = fname.split("_")
+			if len(parts) != 2:
+				continue
+			prefix, frame_part = parts
+			frame_base, ext = os.path.splitext(frame_part)
+			# Pad to 6 digits if not already
+			if len(frame_base) < 6:
+				new_frame = frame_base.zfill(6)
+				new_name = f"{prefix}_{new_frame}{ext}"
+				src = os.path.join(label_dir, fname)
+				dst = os.path.join(label_dir, new_name)
+				if not os.path.exists(dst):
+					os.rename(src, dst)
+					print(f"Renamed {src} -> {dst}")
+				else:
+					print(f"Skipping {src}, {dst} already exists")
+import shutil
+
+def flatten_and_rename_pose_data(pose_root):
+	"""
+	Flattens and renames files in images/labels for train and val splits in the Pose dataset.
+	For each file in a source video folder, moves it up one level and renames it to sourceVideoFolder_frameNumber.ext.
+	Deletes the source video folder if empty after moving.
+	"""
+	for split in ["train", "val"]:
+		for data_type in ["images", "labels"]:
+			base_dir = os.path.join(pose_root, split, data_type)
+			if not os.path.isdir(base_dir):
+				continue
+			for src_video_folder in os.listdir(base_dir):
+				src_path = os.path.join(base_dir, src_video_folder)
+				if not os.path.isdir(src_path):
+					continue
+				for fname in os.listdir(src_path):
+					src_file = os.path.join(src_path, fname)
+					if not os.path.isfile(src_file):
+						continue
+					# Remove extension from folder name if present (e.g., 02.mp4 -> 02)
+					folder_base = os.path.splitext(src_video_folder)[0]
+					frame_base, ext = os.path.splitext(fname)
+					new_name = f"{folder_base}_{frame_base}{ext}"
+					dest_file = os.path.join(base_dir, new_name)
+					# If file exists, skip to avoid overwrite
+					if os.path.exists(dest_file):
+						print(f"Skipping existing file: {dest_file}")
+						continue
+					shutil.move(src_file, dest_file)
+					print(f"Moved {src_file} -> {dest_file}")
+				# Remove folder if empty
+				if not os.listdir(src_path):
+					os.rmdir(src_path)
+					print(f"Removed empty folder: {src_path}")
+
 # Extract labeled frames from videos 01.mp4 to 14.mp4, saving to images/XX.mp4/ for each video
 import os
 import cv2
@@ -50,5 +115,8 @@ def extract_labeled_frames(dataset_path):
 
 if __name__ == "__main__":
 	# Set your dataset path here (should contain videos/, labels/, images/)
-	dataset_path = "C:/Users/fuzail_laptop/Downloads"
-	extract_labeled_frames(dataset_path)
+	# dataset_path = "C:/Users/fuzail_laptop/Downloads"
+	pose_root = "/u50/fuzailm/EarTagModel/Pose"
+	print(f"Running pad_label_filenames_to_six_digits on {pose_root}")
+	# flatten_and_rename_pose_data(pose_root=pose_root)
+	pad_label_filenames_to_six_digits(pose_root=pose_root)
