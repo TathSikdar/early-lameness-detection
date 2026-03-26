@@ -29,7 +29,8 @@ class GaitData:
     def load_keypoints(self):
         df = pd.read_csv(self.keypoints_csv, header=None)
         # Assume columns: video_name, frame, then x,y for each kp
-        self.keypoints = df.iloc[:, 2:].values.reshape(-1, -1, 2)  # (n_frames, n_kp, 2)
+        n_kp = (df.shape[1] - 2) // 2
+        self.keypoints = df.iloc[:, 2:].values.reshape(-1, n_kp, 2)  # (n_frames, n_kp, 2)
         self.n_frames = self.keypoints.shape[0]
     
     def get_xy_bodyparts(self, bodyparts):

@@ -19,7 +19,7 @@ def test_pose():
         print(f"[SKIP] Test image not found at {test_img}. Please add a test image.")
         return
     try:
-        keypoints = pose.estimate_pose(test_img)
+        keypoints = pose.estimate_pose(test_img, save_prediction=True)
         if keypoints is not None:
             print("Keypoints shape:", keypoints.shape)
         else:

@@ -429,12 +429,7 @@ detection_model = EarTagDectionAndLocaliztion()
 
 
 class PoseEstimation:
-    """
-    Class for cow pose estimation using YOLOv8-pose or similar model.
-    Extracts keypoints for gait analysis.
-    """
-    
-    def __init__(self, model_path='yolov8n-pose.pt'):
+    def __init__(self, model_path='runs/pose/runs/pose/cow_pose_finetune/train3/weights/best.pt'):
         """
         Initialize the pose estimation model.
         For cows, we may need a custom model, but starting with general pose.
@@ -452,9 +447,10 @@ class PoseEstimation:
             print(f"ERROR: failed to load YOLO model from {model_path}: {e}")
             self.model = None
     
-    def estimate_pose(self, image_path):
+    def estimate_pose(self, image_path, save_prediction=False):
         """
         Estimate pose from a single image.
+        If save_prediction=True, saves the image with predicted keypoints to the same folder with '_predicted' suffix.
         Returns keypoints as numpy array.
         """
         if self.model is None:
@@ -468,7 +464,23 @@ class PoseEstimation:
         if keypoints.shape[0] == 0:
             print(f"[WARN] Detected object, but no keypoints found in: {image_path}")
             return None
-        return keypoints[0]  # (17, 2)
+        keypoints = keypoints[0]  # (N, 2)
+
+        if save_prediction:
+            import cv2
+            import os
+            img = cv2.imread(image_path)
+            if img is None:
+                print(f"[ERROR] Could not read image: {image_path}")
+            else:
+                for (x, y) in keypoints:
+                    cv2.circle(img, (int(x), int(y)), 5, (0, 0, 255), -1)
+                base, ext = os.path.splitext(image_path)
+                save_path = base + "_predicted" + ext
+                cv2.imwrite(save_path, img)
+                print(f"Saved keypoints visualization to {save_path}")
+
+        return keypoints
     
     def estimate_pose_video(self, video_path, output_csv=None):
         """
@@ -508,3 +520,43 @@ class PoseEstimation:
             df.to_csv(output_csv, index=False, header=False)
         
         return keypoints_list
+    
+    def display_keypoints(self, image_path, keypoints, radius=5, color=(0, 255, 0), thickness=-1):
+        """
+        Display the image with keypoints drawn on it.
+        Args:
+            image_path (str): Path to the image file.
+            keypoints (np.ndarray): Array of shape (N, 2) with (x, y) keypoints.
+            radius (int): Radius of keypoint circles.
+            color (tuple): BGR color for keypoints.
+            thickness (int): Thickness of keypoint circles (-1 for filled).
+        """
+        img = cv2.imread(image_path)
+        if img is None:
+            print(f"[ERROR] Could not read image: {image_path}")
+            return
+        for (x, y) in keypoints:
+            cv2.circle(img, (int(x), int(y)), radius, color, thickness)
+        cv2.imshow("Keypoints", img)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+
+    def save_keypoints(self, image_path, keypoints, save_path, radius=5, color=(0, 0, 255), thickness=-1):
+        """
+        Save the image with keypoints drawn on it to disk.
+        Args:
+        image_path (str): Path to the image file.
+            keypoints (np.ndarray): Array of shape (N, 2) with (x, y) keypoints.
+            save_path (str): Path to save the output image.
+            radius (int): Radius of keypoint circles.
+            color (tuple): BGR color for keypoints.
+            thickness (int): Thickness of keypoint circles (-1 for filled).
+        """
+        img = cv2.imread(image_path)
+        if img is None:
+            print(f"[ERROR] Could not read image: {image_path}")
+            return
+        for (x, y) in keypoints:
+            cv2.circle(img, (int(x), int(y)), radius, color, thickness)
+        cv2.imwrite(save_path, img)
+        print(f"Saved keypoints visualization to {save_path}")
