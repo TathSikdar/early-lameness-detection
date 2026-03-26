@@ -10,7 +10,7 @@ PRETRAINED_MODEL = '../../EarTagModel/Pose/yolov8n-pose.pt'  # Or yolov8s-pose.p
 OUTPUT_DIR = 'runs/pose/cow_pose_finetune'
 
 # Training parameters
-EPOCHS = 2
+EPOCHS = 100
 BATCH_SIZE = 16
 IMG_SIZE = 640
 

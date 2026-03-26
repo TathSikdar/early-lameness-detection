@@ -2,7 +2,7 @@ task: pose
 mode: train
 model: ../../EarTagModel/Pose/yolov8n-pose.pt
 data: ../../EarTagModel/Pose/cattleeyeview_pose.yaml
-epochs: 2
+epochs: 100
 time: null
 patience: 100
 batch: 16
