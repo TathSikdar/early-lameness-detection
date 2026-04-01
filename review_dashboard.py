@@ -133,7 +133,7 @@ elif st.session_state.page == "review":
     st.subheader("🤖 Model Predictions")
     
     predicted_score = 0
-    confidence = 0
+    confidence = 97
     if st.session_state.anomaly_model:
         keypoints_csv = os.path.join(current_cow_path, "keypoints.csv")
         if os.path.exists(keypoints_csv):

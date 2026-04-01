@@ -4,11 +4,50 @@ import os
 import time
 
 class Predict:
+    def run_pose_estimation_top_view(self, video_path: str):
+        """Run pose estimation on the top view video and visualize keypoints in real time."""
+        if not hasattr(self, 'pose_model') or self.pose_model is None:
+            if os.path.exists(self.pose_estimation_model):
+                self.pose_model = YOLO(self.pose_estimation_model)
+                print(f"Loaded pose estimation model from {self.pose_estimation_model}")
+            else:
+                raise FileNotFoundError(f"Pose Estimation model not found at {self.pose_estimation_model}")
+
+        cap = self.load_video(video_path)
+        frame_count = 0
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frame_count += 1
+            print(f"Processing frame {frame_count}")
+            # Run pose estimation
+            results = self.pose_model(frame)
+            annotated = results[0].plot() if results and hasattr(results[0], 'plot') else frame
+            # Show the annotated frame
+            frame_resized = cv2.resize(annotated, (1280, 720))
+            cv2.imshow('Pose Estimation - Top View', frame_resized)
+            # If keypoints detected, delay for 3 seconds
+            keypoints_detected = False
+            if results and hasattr(results[0], 'keypoints') and results[0].keypoints is not None:
+                kps = results[0].keypoints.xy.cpu().numpy()
+                if kps.shape[0] > 0:
+                    keypoints_detected = True
+            if keypoints_detected:
+                if cv2.waitKey(3000) & 0xFF == ord('q'):
+                    break
+            else:
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+        cap.release()
+        cv2.destroyAllWindows()
+        print(f"Processed {frame_count} frames for pose estimation.")
     
-    def __init__(self, tag_detection_model: str, row_detection_model: str, ocr_model: str):
+    def __init__(self, tag_detection_model: str, row_detection_model: str, pose_estimation_model: str, ocr_model: str):
         
         self.tag_detection_model = tag_detection_model
         self.row_detection_model = row_detection_model
+        self.pose_estimation_model = pose_estimation_model
         self.ocr_model = ocr_model
         self.tag_model = None
         self.row_model = None
@@ -26,6 +65,12 @@ class Predict:
             print(f"Loaded row detection model from {self.row_detection_model}")
         else:
             raise FileNotFoundError(f"Row detection model not found at {self.row_detection_model}")
+        
+        if os.path.exists(self.pose_estimation_model):
+            self.pose_model = YOLO(self.pose_estimation_model)
+            print(f"Loaded pose estimation model from {self.pose_estimation_model}")
+        else:
+            raise FileNotFoundError(f"Pose Estimation model not found at {self.pose_estimation_model}")
         
     def load_video(self, video_path: str):
         """Load a video file and return the VideoCapture object."""
@@ -89,7 +134,7 @@ class Predict:
                 cv2.imshow("Ear Tag Crop", predicted_last_row)
                 time.sleep(0.5)
             # Optional: display frame (comment out if not needed)
-            frame_resized = cv2.resize(annotated, (1280,720)) #Resize for display purposes
+            frame_resized = cv2.resize(annotated, (1920,1080)) #Resize for display purposes
             cv2.imshow('Frame', frame_resized)
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
@@ -121,16 +166,18 @@ if __name__ == "__main__":
     # Example usage
     tag_model_path = "runs/detect/Ear_Tag_Detection_Model/Epochs_50/weights/best.pt"
     row_model_path = "runs/obb/Last_Row_Detection_Model/Epochs_50/weights/best.pt"
+    pose_model_path = "runs/pose/runs/pose/cow_pose_finetune/train4/weights/best.pt"
     ocr_model_path = ""  # Placeholder for OCR model if needed
     
-    predictor = Predict(tag_model_path, row_model_path, ocr_model_path)
+    predictor = Predict(tag_model_path, row_model_path, pose_model_path, ocr_model_path)
     predictor.load_model()
     
     # Assuming 4K video is in data/raw/side_4k/ or similar
     video_path = "data/raw/side_4k/side_4k.mp4"  # Replace with actual video path
+    top_video_path = "data/raw/top/top.mp4" #Replace 
     
     # cam = cv2.VideoCapture(video_path)
     # total_frames = int(cam.get(cv2.CAP_PROP_FRAME_COUNT))
     # print(total_frames)
-    predictor.run_prediction_pipeline(video_path)
+    predictor.run_pose_estimation_top_view(top_video_path)
         
