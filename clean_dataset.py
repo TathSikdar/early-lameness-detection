@@ -113,10 +113,56 @@ def extract_labeled_frames(dataset_path):
 
 		cap.release()
 
+def decrement_label_frame_numbers(pose_root):
+	"""
+	Renames label files in train/labels and val/labels so that each file's
+	frame number is decremented by 1, aligning labels with the correct images.
+
+	Example: 02_000031.txt -> 02_000030.txt
+	         02_000032.txt -> 02_000031.txt
+
+	Files are processed in ascending order so that each rename vacates the
+	destination slot before the next file needs it, avoiding collisions.
+	"""
+	for split in ["train", "val"]:
+		label_dir = os.path.join(pose_root, split, "labels")
+		if not os.path.isdir(label_dir):
+			print(f"Label directory not found, skipping: {label_dir}")
+			continue
+
+		txt_files = sorted(f for f in os.listdir(label_dir) if f.endswith(".txt"))
+
+		for fname in txt_files:
+			parts = fname.rsplit("_", 1)
+			if len(parts) != 2:
+				print(f"Unexpected filename format, skipping: {fname}")
+				continue
+			prefix, frame_part = parts
+			frame_base, ext = os.path.splitext(frame_part)
+			if not frame_base.isdigit():
+				print(f"Non-numeric frame number, skipping: {fname}")
+				continue
+
+			new_frame_num = int(frame_base) - 1
+			if new_frame_num < 0:
+				print(f"Frame number would go negative, skipping: {fname}")
+				continue
+
+			new_fname = f"{prefix}_{str(new_frame_num).zfill(len(frame_base))}{ext}"
+			src = os.path.join(label_dir, fname)
+			dst = os.path.join(label_dir, new_fname)
+
+			if os.path.exists(dst):
+				print(f"Destination already exists, skipping: {dst}")
+				continue
+
+			os.rename(src, dst)
+			print(f"Renamed: {fname} -> {new_fname}")
+
+		print(f"Finished decrementing labels in: {label_dir}")
+
+
 if __name__ == "__main__":
-	# Set your dataset path here (should contain videos/, labels/, images/)
-	# dataset_path = "C:/Users/fuzail_laptop/Downloads"
 	pose_root = "/u50/fuzailm/EarTagModel/Pose"
-	print(f"Running pad_label_filenames_to_six_digits on {pose_root}")
-	# flatten_and_rename_pose_data(pose_root=pose_root)
-	pad_label_filenames_to_six_digits(pose_root=pose_root)
+	print(f"Running decrement_label_frame_numbers on {pose_root}")
+	decrement_label_frame_numbers(pose_root=pose_root)
