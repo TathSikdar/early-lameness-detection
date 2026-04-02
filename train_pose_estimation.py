@@ -9,6 +9,7 @@ DATA_YAML       = '../../EarTagModel/Pose/cattleeyeview_pose.yaml'
 # is too constrained for 24-keypoint cow pose.  The small model (~11 M params)
 # gives significantly better keypoint accuracy at modest extra cost.
 PRETRAINED_MODEL = '../../EarTagModel/Pose/yolo26s-pose.pt'
+CONTINUE_TRAINING_MODEL = 'runs/pose/runs/pose/cow_pose_finetune/train5/weights/last.pt'
 
 OUTPUT_DIR = 'runs/pose/cow_pose_finetune'
 
@@ -26,13 +27,14 @@ BATCH_SIZE = 8
 # epoch 100 (vs train 1.85) — the model had not converged and was already
 # overfitting.  Cosine annealing gives a smoother final descent and often
 # recovers an extra 1-2 % mAP at the end.
-EPOCHS     = 2
+EPOCHS     = 100
 PATIENCE   = 50   # stop early if val pose loss stops improving
 
 
 def main():
-    model = YOLO(PRETRAINED_MODEL)
-
+    # model = YOLO(PRETRAINED_MODEL)
+    model = YOLO(CONTINUE_TRAINING_MODEL)
+    
     model.train(
         data        = DATA_YAML,
         epochs      = EPOCHS,
@@ -40,7 +42,14 @@ def main():
         batch       = BATCH_SIZE,
         imgsz       = IMG_SIZE,
         project     = OUTPUT_DIR,
-        device      = 0
+        degrees     = 15.0,       # ±15° rotation
+        scale       = 0.5,        # random scale in [0.5, 1.5]
+        translate   = 0.1,
+        hsv_h       = 0.015,
+        hsv_s       = 0.5,
+        hsv_v       = 0.4,
+        device      = 0,
+        resume = True
     )
 
 # # FIX 4: Cosine LR decay — smoother convergence than linear.
