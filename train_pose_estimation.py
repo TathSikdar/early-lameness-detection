@@ -3,14 +3,14 @@ from ultralytics import YOLO
 # ---------------------------------------------------------------------------
 # Paths — update these to match your local setup
 # ---------------------------------------------------------------------------
-DATA_YAML       = 'C:/Users/fuzail_laptop/Downloads/Pose/cattleeyeview_pose.yaml'
+DATA_YAML       = '../../EarTagModel/Pose/cattleeyeview_pose.yaml'
 
 # FIX 1: Upgrade from nano → small.  The nano model only has ~3 M params which
 # is too constrained for 24-keypoint cow pose.  The small model (~11 M params)
 # gives significantly better keypoint accuracy at modest extra cost.
-PRETRAINED_MODEL = 'yolov8s-pose.pt'
+PRETRAINED_MODEL = '../../EarTagModel/Pose/yolo26s-pose.pt'
 
-OUTPUT_DIR = 'runs/pose/cow_pose_v2'
+OUTPUT_DIR = 'runs/pose/cow_pose_finetune'
 
 # ---------------------------------------------------------------------------
 # Hyperparameters
@@ -26,7 +26,7 @@ BATCH_SIZE = 8
 # epoch 100 (vs train 1.85) — the model had not converged and was already
 # overfitting.  Cosine annealing gives a smoother final descent and often
 # recovers an extra 1-2 % mAP at the end.
-EPOCHS     = 200
+EPOCHS     = 2
 PATIENCE   = 50   # stop early if val pose loss stops improving
 
 
@@ -40,46 +40,45 @@ def main():
         batch       = BATCH_SIZE,
         imgsz       = IMG_SIZE,
         project     = OUTPUT_DIR,
-        device      = 0,
-
-        # FIX 4: Cosine LR decay — smoother convergence than linear.
-        cos_lr      = True,
-        lr0         = 0.01,
-        lrf         = 0.005,      # final LR = lr0 × lrf = 5e-5
-
-        # FIX 5: Dropout regularisation to combat overfitting.  Val/pose_loss
-        # was 2.4× the training loss — a clear sign the model was memorising
-        # rather than generalising.
-        dropout     = 0.1,
-
-        # FIX 6: Augmentation tuning for overhead cattle footage.
-        # - Gentle rotation: cows can face any direction in a top-down view.
-        # - Scale jitter: cows appear at different distances from the camera.
-        # - No fliplr/flipud beyond YOLO defaults because flip_idx is already
-        #   defined in the yaml and will be applied automatically.
-        degrees     = 15.0,       # ±15° rotation
-        scale       = 0.5,        # random scale in [0.5, 1.5]
-        translate   = 0.1,
-        hsv_h       = 0.015,
-        hsv_s       = 0.5,
-        hsv_v       = 0.4,
-        # Keep mosaic on (default=1.0) but close it later in training so the
-        # model also sees clean single-instance frames.
-        close_mosaic = 20,
-
-        # FIX 7: Multi-scale training adds scale variety without extra data —
-        # helps generalise to cows at different heights in the frame.
-        multi_scale = True,
-
-        # FIX 8: Weight decay — additional regularisation on top of dropout.
-        weight_decay = 0.001,
-
-        # Misc
-        workers     = 8,
-        seed        = 42,
-        plots       = True,
+        device      = 0
     )
 
+# # FIX 4: Cosine LR decay — smoother convergence than linear.
+#         cos_lr      = True,
+#         lr0         = 0.01,
+#         lrf         = 0.005,      # final LR = lr0 × lrf = 5e-5
+
+#         # FIX 5: Dropout regularisation to combat overfitting.  Val/pose_loss
+#         # was 2.4× the training loss — a clear sign the model was memorising
+#         # rather than generalising.
+#         dropout     = 0.1,
+
+#         # FIX 6: Augmentation tuning for overhead cattle footage.
+#         # - Gentle rotation: cows can face any direction in a top-down view.
+#         # - Scale jitter: cows appear at different distances from the camera.
+#         # - No fliplr/flipud beyond YOLO defaults because flip_idx is already
+#         #   defined in the yaml and will be applied automatically.
+#         degrees     = 15.0,       # ±15° rotation
+#         scale       = 0.5,        # random scale in [0.5, 1.5]
+#         translate   = 0.1,
+#         hsv_h       = 0.015,
+#         hsv_s       = 0.5,
+#         hsv_v       = 0.4,
+#         # Keep mosaic on (default=1.0) but close it later in training so the
+#         # model also sees clean single-instance frames.
+#         close_mosaic = 20,
+
+#         # FIX 7: Multi-scale training adds scale variety without extra data —
+#         # helps generalise to cows at different heights in the frame.
+#         multi_scale = True,
+
+#         # FIX 8: Weight decay — additional regularisation on top of dropout.
+#         weight_decay = 0.001,
+
+#         # Misc
+#         workers     = 8,
+#         seed        = 42,
+#         plots       = True,
 
 if __name__ == '__main__':
     main()
