@@ -2,6 +2,7 @@ import cv2
 from ultralytics import YOLO
 import os
 import time
+import utils.video as video_utils
 
 class Predict:
     def run_pose_estimation_top_view(self, video_path: str):
@@ -15,30 +16,41 @@ class Predict:
 
         cap = self.load_video(video_path)
         frame_count = 0
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        
+        seg = video_utils.Segmenter()
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
                 break
             frame_count += 1
             print(f"Processing frame {frame_count}")
+            
+            #Slice frame
+            frame = seg.slice(frame)
+            
             # Run pose estimation
             results = self.pose_model(frame)
             annotated = results[0].plot() if results and hasattr(results[0], 'plot') else frame
             # Show the annotated frame
-            frame_resized = cv2.resize(annotated, (1280, 720))
-            cv2.imshow('Pose Estimation - Top View', frame_resized)
+            # frame_resized = cv2.resize(annotated, (1280, 720))
+            
+            cv2.imshow('Pose Estimation - Top View', annotated)
             # If keypoints detected, delay for 3 seconds
             keypoints_detected = False
             if results and hasattr(results[0], 'keypoints') and results[0].keypoints is not None:
                 kps = results[0].keypoints.xy.cpu().numpy()
                 if kps.shape[0] > 0:
+                    pass
                     keypoints_detected = True
             if keypoints_detected:
-                if cv2.waitKey(3000) & 0xFF == ord('q'):
+                if cv2.waitKey(500) & 0xFF == ord('q'):
                     break
             else:
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
+            # if cv2.waitKey(1) & 0xFF == ord('q'):
+            #     break
         cap.release()
         cv2.destroyAllWindows()
         print(f"Processed {frame_count} frames for pose estimation.")
@@ -132,7 +144,6 @@ class Predict:
                 predicted_last_row = row_results[0].plot() # Annotate the ear tag crop with row detection results    
                 
                 cv2.imshow("Ear Tag Crop", predicted_last_row)
-                time.sleep(0.5)
             # Optional: display frame (comment out if not needed)
             frame_resized = cv2.resize(annotated, (1920,1080)) #Resize for display purposes
             cv2.imshow('Frame', frame_resized)
@@ -174,7 +185,7 @@ if __name__ == "__main__":
     
     # Assuming 4K video is in data/raw/side_4k/ or similar
     video_path = "data/raw/side_4k/side_4k.mp4"  # Replace with actual video path
-    top_video_path = "data/raw/top/top.mp4" #Replace 
+    top_video_path = "data/raw/top/top_better_quality.mp4" #Replace 
     
     # cam = cv2.VideoCapture(video_path)
     # total_frames = int(cam.get(cv2.CAP_PROP_FRAME_COUNT))

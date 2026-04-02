@@ -412,7 +412,7 @@ class EarTagIDExtraction:
         
 #================== Testing ========================       
 # Model 1: Ear Tag Detection
-detection_model = EarTagDectionAndLocaliztion()
+# detection_model = EarTagDectionAndLocaliztion()
 # result = detection_model.clean_labels_for_last_row_detection()
 # detection_model.train_model(0)
 
@@ -429,7 +429,7 @@ detection_model = EarTagDectionAndLocaliztion()
 
 
 class PoseEstimation:
-    def __init__(self, model_path='runs/pose/runs/pose/cow_pose_finetune/train3/weights/best.pt'):
+    def __init__(self, model_path='runs/pose/runs/pose/cow_pose_finetune/train4/weights/best.pt'):
         """
         Initialize the pose estimation model.
         For cows, we may need a custom model, but starting with general pose.
@@ -560,3 +560,9 @@ class PoseEstimation:
             cv2.circle(img, (int(x), int(y)), radius, color, thickness)
         cv2.imwrite(save_path, img)
         print(f"Saved keypoints visualization to {save_path}")
+        
+if __name__ == "__main__":
+    pose = PoseEstimation()
+    vid_path = "C:/Users/fuzail_laptop/Desktop/Code/cow_gait_analysis/early-lameness-detection/data/raw/top/top.mp4"
+    pose.estimate_pose_video(video_path=vid_path)
+    
