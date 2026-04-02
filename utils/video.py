@@ -306,41 +306,53 @@ class Segmenter:
         
         print(f"\nMetadata saved to: {metadata_path}")
         return metadata_path    
-    def _extract_side_segments(self, top_segments):
+    def _extract_side_segments(self, top_segments, side_segment_frames=30, frame_offset=40):
         """
         Helper function to extract side camera segments based on top camera segments.
-        Takes 10 frames starting 40 frames before each top segment start.
+        Takes side_segment_frames ending frame_offset frames before each top segment start.
         
         Top Segments extraction is more accurate and hence this was used to extract the side segments
         Args:
             top_segments (dict): Dictionary of top camera segments with format:
                                   {'cow_0': {'frames': [...], 'Flagged': '...'}, ...}
+            side_segment_frames (int): Number of frames to include for side segment (default: 30).
+            frame_offset (int): Number of frames before top start where side segment should end (default: 40).
         
         Returns:
             dict: Dictionary of side camera segments with format:
                   {'cow_0': {'frames': [frame_list], 'Flagged': 'GOOD'/'TOO_SHORT'}, ...}
         """
         segments = {}
+
+        if side_segment_frames <= 0:
+            raise ValueError("side_segment_frames must be greater than 0")
+
+        if frame_offset <= 0:
+            raise ValueError("frame_offset must be greater than 0")
         
         for cow_id, segment_data in top_segments.items():
             frames = segment_data['frames']
             if frames:
                 top_start = frames[0]
-                # Side segment: 10 frames starting 40 frames before top start
-                side_start = max(1, top_start - 40)  # Ensure we don't go below frame 1
-                side_end = top_start - 31  # 10 frames: from 40 to 31 frames before
+                # Side segment ends frame_offset frames before top start and spans side_segment_frames frames.
+                side_end = top_start - frame_offset
+                side_start = max(1, side_end - side_segment_frames + 1)
+
+                if side_end < 1:
+                    side_frames = []
+                else:
+                    side_frames = list(range(side_start, side_end + 1))
                 
                 # Create side segment frames list
-                side_frames = list(range(side_start, side_end + 1))
                 segment_length = len(side_frames)
                 
-                # Check if segment meets minimum length (should be 10 if front_start > 40)
-                if segment_length >= 10:
+                # Check if segment meets requested minimum length.
+                if segment_length >= side_segment_frames:
                     status = "GOOD"
                     print(f"Extracted SIDE cow_{cow_id[-1]}: frames {side_start} to {side_end} (total: {segment_length} frames, status: {status})")
                 else:
                     status = "TOO_SHORT"
-                    print(f"SIDE cow_{cow_id[-1]}: insufficient frames ({segment_length} < 10, status: {status})")
+                    print(f"SIDE cow_{cow_id[-1]}: insufficient frames ({segment_length} < {side_segment_frames}, status: {status})")
                 
                 segments[cow_id] = {
                     'frames': side_frames,
@@ -479,11 +491,11 @@ class Segmenter:
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
             
-    def extract_segments(self, view, output_dir, session_id, min_frames=25, max_frames=65, top_segments=None):
+    def extract_segments(self, view, output_dir, session_id, min_frames=25, max_frames=65, top_segments=None, side_segment_frames=30):
         """
         Extracts segments from video where motion is detected, filtering for single cow segments.
         
-        For 'side' view: Takes the last 50 frames before each top segment start.
+        For 'side' view: Extracts side_segment_frames before each top segment start (default: 30).
         For 'top' and 'front' views: Uses background subtraction and motion detection.
         
         Args:
@@ -492,7 +504,8 @@ class Segmenter:
             session_id (str): Session identifier to determine the correct session folder.
             min_frames (int): Minimum frame count for a valid segment (default: 25).
             max_frames (int): Maximum frame count for a valid segment (default: 65).
-            front_segments (dict): Optional. Front camera segments to use for side view extraction.
+            top_segments (dict): Optional. Top camera segments to use for side view extraction.
+            side_segment_frames (int): Number of frames for side view extraction (default: 30).
             
         Returns:
             dict: Dictionary of cow segments with format:
@@ -506,7 +519,7 @@ class Segmenter:
         if view == 'side':
             if top_segments is None:
                 raise ValueError("Side view extraction requires top_segments parameter")
-            return self._extract_side_segments(top_segments)
+            return self._extract_side_segments(top_segments, side_segment_frames=side_segment_frames)
         
         # Set threshold based on view
         if view == 'top':
