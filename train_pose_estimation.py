@@ -3,7 +3,7 @@ from ultralytics import YOLO
 # ---------------------------------------------------------------------------
 # Paths — update these to match your local setup
 # ---------------------------------------------------------------------------
-DATA_YAML       = '../../EarTagModel/Pose/cattleeyeview_pose.yaml'
+DATA_YAML       = '../../EarTagModel/Pose/cattleeyeview_pose_copy.yaml'
 
 # FIX 1: Upgrade from nano → small.  The nano model only has ~3 M params which
 # is too constrained for 24-keypoint cow pose.  The small model (~11 M params)
@@ -27,13 +27,13 @@ BATCH_SIZE = 8
 # epoch 100 (vs train 1.85) — the model had not converged and was already
 # overfitting.  Cosine annealing gives a smoother final descent and often
 # recovers an extra 1-2 % mAP at the end.
-EPOCHS     = 100
+EPOCHS     = 10
 PATIENCE   = 50   # stop early if val pose loss stops improving
 
 
 def main():
-    # model = YOLO(PRETRAINED_MODEL)
-    model = YOLO(CONTINUE_TRAINING_MODEL)
+    model = YOLO(PRETRAINED_MODEL)
+    # model = YOLO(CONTINUE_TRAINING_MODEL)
     
     model.train(
         data        = DATA_YAML,
@@ -42,14 +42,13 @@ def main():
         batch       = BATCH_SIZE,
         imgsz       = IMG_SIZE,
         project     = OUTPUT_DIR,
-        degrees     = 15.0,       # ±15° rotation
+        degrees     = 30.0,       # ±15° rotation
         scale       = 0.5,        # random scale in [0.5, 1.5]
         translate   = 0.1,
         hsv_h       = 0.015,
         hsv_s       = 0.5,
         hsv_v       = 0.4,
-        device      = 0,
-        resume = True
+        device      = 0
     )
 
 # # FIX 4: Cosine LR decay — smoother convergence than linear.
