@@ -227,7 +227,7 @@ class Predict:
 
         cap = self.load_video(video_path)
         frame_count = 0
-        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 100)
         
         seg = video_utils.Segmenter()
         while cap.isOpened():
@@ -238,10 +238,11 @@ class Predict:
             print(f"Processing frame {frame_count}")
             
             #Slice frame
-            frame = seg.slice(frame)
+            # frame = seg.slice(frame)  
             
             # Run pose estimation
             results = self.pose_model(frame)
+            
             annotated = results[0].plot() if results and hasattr(results[0], 'plot') else frame
             # Show the annotated frame
             # frame_resized = cv2.resize(annotated, (1280, 720))
@@ -255,7 +256,7 @@ class Predict:
                     pass
                     keypoints_detected = True
             if keypoints_detected:
-                if cv2.waitKey(500) & 0xFF == ord('q'):
+                if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
             else:
                 if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -381,7 +382,7 @@ if __name__ == "__main__":
     # Example usage
     tag_model_path = "runs/detect/Ear_Tag_Detection_Model/Epochs_50/weights/best.pt"
     row_model_path = "runs/obb/Last_Row_Detection_Model/Epochs_50/weights/best.pt"
-    pose_model_path = "runs/pose/runs/pose/cow_pose_finetune/train4/weights/best.pt"
+    pose_model_path = "runs/pose/runs/pose/cow_pose_finetune/train5/weights/best.pt"
     ocr_model_path = ""  # Placeholder for OCR model if needed
     
     predictor = Predict(tag_model_path, row_model_path, pose_model_path, ocr_model_path)
@@ -390,11 +391,13 @@ if __name__ == "__main__":
     # Assuming 4K video is in data/raw/side_4k/ or similar
     video_path = "data/raw/side_4k/side_4k.mp4"  # Replace with actual video path
     top_video_path = "data/raw/top/top.mp4" #Replace 
+    top_vid_path_better = "data/raw/top/top_better_quality.mp4"
+    cow_id_video_path = "data/processed/session_1/cow_0/top/cow_0_top_segment.mp4"
     
     # cam = cv2.VideoCapture(video_path)
     # total_frames = int(cam.get(cv2.CAP_PROP_FRAME_COUNT))
     # print(total_frames)
-    predictor.run_pose_estimation_top_view(top_video_path)
+    predictor.run_pose_estimation_top_view(video_path=top_vid_path_better)
     # Example stage writer call:
     # predictor.run_ear_tag_detection_stage(
     #     video_path=video_path,

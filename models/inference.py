@@ -429,7 +429,7 @@ class EarTagIDExtraction:
 
 
 class PoseEstimation:
-    def __init__(self, model_path='runs/pose/runs/pose/cow_pose_finetune/train6/weights/best.pt'):
+    def __init__(self, model_path='runs/pose/runs/pose/cow_pose_finetune/Best/weights/best.pt'):
         """
         Initialize the pose estimation model.
         For cows, we may need a custom model, but starting with general pose.

@@ -8,6 +8,7 @@ from models.inference import PoseEstimation
 from quick_label import Predict
 from utils.metrics import GaitData
 from utils.video import Segmenter
+from detect_cows import create_or_update_cow_json
 
 
 @dataclass
@@ -42,10 +43,32 @@ def run_stage_segmentation(config: PipelineConfig) -> str:
 
 
 def run_stage_extract_clips(config: PipelineConfig) -> None:
-    """Stage 2: Read metadata and extract per-cow view clips."""
+    """Stage 2: Read metadata and extract per-cow view clips. Also create initial JSON for each cow."""
     extracter = Extracter(output_dir=config.output_dir, session_id=config.session_id)
     stats = extracter.extract_all_segments()
     print(f"[Stage 2] Extraction summary: {stats}")
+    # For each cow folder, create initial JSON
+    session_dir = os.path.join(config.output_dir, config.session_id)
+    if os.path.exists(session_dir):
+        for cow_name in os.listdir(session_dir):
+            cow_folder = os.path.join(session_dir, cow_name)
+            if not os.path.isdir(cow_folder) or not cow_name.startswith("cow_"):
+                continue
+            # Find top video if exists
+            top_dir = os.path.join(cow_folder, "top")
+            top_video = None
+            if os.path.exists(top_dir):
+                for f in os.listdir(top_dir):
+                    if f.endswith(".mp4"):
+                        top_video = os.path.join(top_dir, f)
+                        break
+            create_or_update_cow_json(
+                cow_id=cow_name,
+                session_id=config.session_id,
+                video_path=top_video if top_video else "",
+                cow_folder=cow_folder
+            )
+            print(f"[Stage 2] Created/updated lameness_analysis.json for {cow_name}")
 
 
 def run_stage_ear_tag_metadata(config: PipelineConfig, cow_temp_id: str, predictor: Predict) -> str:
@@ -129,8 +152,10 @@ if __name__ == "__main__":
     predictor.load_model()
 
     # Example full order:
-    # run_stage_segmentation(config=config_)         # (1)
-    # run_stage_extract_clips(config=config_)        # (2)
+    run_stage_segmentation(config=config_)         # (1)
+    run_stage_extract_clips(config=config_)        # (2)
+    
+    #Below functions needs to be called for each cow (e.g. cow_0, cow_1, etc.) after stage 2 is complete and JSONs are created for each cow.
     run_stage_ear_tag_metadata(config=config_, cow_temp_id="cow_0", predictor=predictor)     # (3) per cow
     run_stage_last_row_detection(config=config_, cow_temp_id="cow_0", predictor=predictor)  # (4) per cow
     # run_stage_ocr()                  # (5) per cow
