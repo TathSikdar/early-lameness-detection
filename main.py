@@ -3,12 +3,12 @@ import os
 import subprocess
 
 from extract_frames import Extracter
-from models.architecture import AnomalyDetector
 from models.inference import PoseEstimation
+from models.pose_analysis import compute_lameness_score
 from quick_label import Predict
 from utils.metrics import GaitData
 from utils.video import Segmenter
-from detect_cows import create_or_update_cow_json
+from detect_cows import create_or_update_cow_json, process_pose_and_lameness_for_cow
 
 
 @dataclass
@@ -113,26 +113,71 @@ def run_stage_ocr(_: PipelineConfig, __: str) -> None:
 
 
 def run_stage_pose_and_lameness(config: PipelineConfig, cow_temp_id: str) -> None:
-    """Stage 6 placeholder: run pose inference, then calculate lameness."""
-    top_clip = os.path.join(
-        config.output_dir,
-        config.session_id,
-        cow_temp_id,
-        "top",
-        f"{cow_temp_id}_top_segment.mp4",
+    """Stage 6: Run pose estimation on top view and update lameness_analysis.json."""
+    import cv2
+    cow_folder = os.path.join(config.output_dir, config.session_id, cow_temp_id)
+    top_dir = os.path.join(cow_folder, "top")
+    # Find top video
+    top_video = None
+    if os.path.exists(top_dir):
+        for f in os.listdir(top_dir):
+            if f.endswith(".mp4"):
+                top_video = os.path.join(top_dir, f)
+                break
+    if not top_video or not os.path.exists(top_video):
+        print(f"[Stage 6] No top video found for {cow_temp_id}, skipping pose analysis.")
+        return
+    # Extract frames
+    cap = cv2.VideoCapture(top_video)
+    frames = []
+    count = 0
+    max_frames = 100  # Limit for speed; adjust as needed
+    while True:
+        ret, frame = cap.read()
+        if not ret or count >= max_frames:
+            break
+        frames.append(frame)
+        count += 1
+    cap.release()
+    if not frames:
+        print(f"[Stage 6] No frames extracted from {top_video} for {cow_temp_id}.")
+        return
+    # Load pose model
+    try:
+        from ultralytics import YOLO
+        pose_model = YOLO(config.pose_model_path)
+    except Exception as e:
+        print(f"[Stage 6] Failed to load pose model: {e}")
+        return
+    # Compute lameness score
+    try:
+        lameness_result = compute_lameness_score(frames, pose_model)
+    except Exception as e:
+        print(f"[Stage 6] Lameness scoring failed for {cow_temp_id}: {e}")
+        return
+    # Save to JSON
+    create_or_update_cow_json(
+        cow_id=cow_temp_id,
+        session_id=config.session_id,
+        video_path=top_video,
+        cow_folder=cow_folder,
+        **lameness_result
     )
-    keypoints_csv = os.path.join(config.output_dir, config.session_id, cow_temp_id, "keypoints.csv")
+    print(f"[Stage 6] Lameness analysis updated for {cow_temp_id}")
 
-    pose_estimator = PoseEstimation(model_path=config.pose_model_path)
-    if pose_estimator.model is None:
-        raise RuntimeError("Pose model could not be loaded")
 
-    pose_estimator.estimate_pose_video(top_clip, keypoints_csv)
-    gait = GaitData(keypoints_csv)
-    features = gait.extract_features()
-
-    detector = AnomalyDetector()
-    print(f"[Stage 6] TODO: load trained anomaly model and score features: {features}")
+def run_stage_process_pose_and_lameness_for_cow(config: PipelineConfig, cow_temp_id: str) -> None:
+    """Stage: Run pose estimation and lameness scoring for a single cow by delegating to detect_cows module."""
+    from detect_cows import process_pose_and_lameness_for_cow
+    from models.inference import PoseEstimation
+    pose_estimator = PoseEstimation(config.pose_model_path)
+    process_pose_and_lameness_for_cow(
+        cow_temp_id=cow_temp_id,
+        session_id=config.session_id,
+        output_dir=config.output_dir,
+        pose_estimator=pose_estimator,
+        max_frames=100
+    )
 
 
 def run_stage_dashboard() -> None:
@@ -152,12 +197,33 @@ if __name__ == "__main__":
     predictor.load_model()
 
     # Example full order:
-    run_stage_segmentation(config=config_)         # (1)
-    run_stage_extract_clips(config=config_)        # (2)
-    
-    #Below functions needs to be called for each cow (e.g. cow_0, cow_1, etc.) after stage 2 is complete and JSONs are created for each cow.
-    run_stage_ear_tag_metadata(config=config_, cow_temp_id="cow_0", predictor=predictor)     # (3) per cow
-    run_stage_last_row_detection(config=config_, cow_temp_id="cow_0", predictor=predictor)  # (4) per cow
-    # run_stage_ocr()                  # (5) per cow
-    # run_stage_pose_and_lameness()    # (6) per cow
-    # run_stage_dashboard()            # (7)
+    # run_stage_segmentation(config=config_)         # (1)
+    # run_stage_extract_clips(config=config_)        # (2)
+
+    # Run stages 3-6 for all cows in all sessions
+    # processed_root = config_.output_dir
+    # if os.path.exists(processed_root):
+    #     for session in sorted(os.listdir(processed_root)):
+    #         session_path = os.path.join(processed_root, session)
+    #         if not os.path.isdir(session_path) or not session.startswith("session"):
+    #             continue
+    #         print(f"[Pipeline] Processing session: {session}")
+    #         for cow in sorted(os.listdir(session_path)):
+    #             cow_path = os.path.join(session_path, cow)
+    #             if not os.path.isdir(cow_path) or not cow.startswith("cow_"):
+    #                 continue
+    #             print(f"[Pipeline] Processing cow: {cow}")
+    #             try:
+    #                 run_stage_ear_tag_metadata(config_, cow, predictor)
+    #             except Exception as e:
+    #                 print(f"[Pipeline] Ear tag metadata failed for {cow}: {e}")
+    #             try:
+    #                 run_stage_last_row_detection(config_, cow, predictor)
+    #             except Exception as e:
+    #                 print(f"[Pipeline] Last row detection failed for {cow}: {e}")
+    #             try:
+    #                 run_stage_pose_and_lameness(config_, cow)
+    #             except Exception as e:
+    #                 print(f"[Pipeline] Pose/lameness failed for {cow}: {e}")
+
+    run_stage_dashboard()            # (7) launch dashboard for review

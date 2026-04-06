@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 import base64
+import re
 from models.architecture import AnomalyDetector
 from utils.metrics import GaitData
 
@@ -16,25 +17,35 @@ if "page" not in st.session_state:
 if "main_path" not in st.session_state:
     st.session_state.main_path = "data/processed"
 
-# Build a flat list of (session, cow) tuples from all sessions
-if "all_cows" not in st.session_state:
+def natural_sort_key(value: str):
+    return [int(part) if part.isdigit() else part.lower() for part in re.split(r"(\d+)", value)]
+
+
+def build_all_cows(main_path: str):
     all_cows = []
-    main_path = st.session_state.main_path
     if os.path.exists(main_path):
-        for session in sorted(os.listdir(main_path)):
+        for session in sorted(os.listdir(main_path), key=natural_sort_key):
             session_path = os.path.join(main_path, session)
-            if os.path.isdir(session_path):
-                for cow in sorted(os.listdir(session_path)):
-                    cow_path = os.path.join(session_path, cow)
-                    if os.path.isdir(cow_path):
-                        all_cows.append((session, cow))
-    st.session_state.all_cows = all_cows
+            if not os.path.isdir(session_path):
+                continue
+            for cow in sorted(os.listdir(session_path), key=natural_sort_key):
+                cow_path = os.path.join(session_path, cow)
+                if os.path.isdir(cow_path) and cow.startswith("cow_"):
+                    all_cows.append((session, cow))
+    return all_cows
+
+
+st.session_state.all_cows = build_all_cows(st.session_state.main_path)
 
 if "cow_index" not in st.session_state:
     st.session_state.cow_index = 0
 
-if "total_cows" not in st.session_state:
-    st.session_state.total_cows = len(st.session_state.all_cows)
+st.session_state.total_cows = len(st.session_state.all_cows)
+
+if st.session_state.total_cows > 0:
+    st.session_state.cow_index = min(st.session_state.cow_index, st.session_state.total_cows - 1)
+else:
+    st.session_state.cow_index = 0
 
 # Default lameness score of 10 means "not yet scored"
 if "user_lameness_score" not in st.session_state:
@@ -78,12 +89,22 @@ if st.session_state.page == "menu":
 
 elif st.session_state.page == "review":
 
-    session, cow = st.session_state.all_cows[st.session_state.cow_index]
-    current_cow_path = os.path.join(st.session_state.main_path, session, cow)
+    import json
+    import datetime as dt
+    session, cow_folder = st.session_state.all_cows[st.session_state.cow_index]
+    current_cow_path = os.path.join(st.session_state.main_path, session, cow_folder)
+    lameness_json_path = os.path.join(current_cow_path, "lameness_analysis.json")
+    cow_data = None
+    if os.path.exists(lameness_json_path):
+        with open(lameness_json_path, "r") as f:
+            cow_data = json.load(f)
+    else:
+        st.warning(f"No lameness_analysis.json found for {cow_folder}")
+        cow_data = {}
 
     # ── Header ──
     st.title("🐄 Cow Lameness Review")
-    st.markdown(f"**Session:** `{session}` &nbsp;|&nbsp; **Cow:** `{cow}` &nbsp;|&nbsp; **Progress:** {st.session_state.cow_index + 1} / {st.session_state.total_cows}")
+    st.markdown(f"**Session:** `{session}` &nbsp;|&nbsp; **Cow:** `{cow_folder}` &nbsp;|&nbsp; **Progress:** {st.session_state.cow_index + 1} / {st.session_state.total_cows}")
     st.progress((st.session_state.cow_index) / st.session_state.total_cows)
     st.divider()
 
@@ -93,117 +114,99 @@ elif st.session_state.page == "review":
     col_top, col_side, col_front = st.columns(3)
     cols = {"top": col_top, "side": col_side, "front": col_front}
 
-    def autoplay_video(video_path, label):
-        """Render an autoplaying, looping, muted video using base64 HTML."""
-        with open(video_path, "rb") as f:
-            video_bytes = f.read()
-        b64 = base64.b64encode(video_bytes).decode()
+    def render_video(video_path, label):
         ext = os.path.splitext(video_path)[-1].lower().replace(".", "")
         mime = "video/mp4" if ext == "mp4" else "video/quicktime"
-        html = f"""
-        <p style="margin-bottom:6px; font-weight:600; font-size:16px">{label}</p>
-        <video width="100%" autoplay loop muted playsinline
-               style="border-radius:10px; background:#000; object-fit:contain;">
-            <source src="data:{mime};base64,{b64}" type="{mime}">
-        </video>
-        """
-        st.html(html)
+        st.markdown(f"**{label}**")
+        with open(video_path, "rb") as f:
+            st.video(f.read(), format=mime, autoplay=True, loop=True, muted=True)
 
     for angle in video_angles:
         angle_path = os.path.join(current_cow_path, angle)
         with cols[angle]:
             if os.path.exists(angle_path):
-                video_files = [
+                video_files = sorted([
                     f for f in os.listdir(angle_path)
                     if f.lower().endswith((".mp4", ".mov"))
-                ]
+                ], key=natural_sort_key)
                 if video_files:
                     video_path = os.path.join(angle_path, video_files[0])
-                    autoplay_video(video_path, f"📷 {angle.capitalize()} View")
+                    render_video(video_path, f"📷 {angle.capitalize()} View")
                 else:
                     st.markdown(f"**{angle.capitalize()} View**")
                     st.info("No video found")
             else:
                 st.markdown(f"**{angle.capitalize()} View**")
                 st.warning(f"Folder not found: `{angle_path}`")
-
     st.divider()
 
-    # ── Model Scores ──
-    st.subheader("🤖 Model Predictions")
-    
-    predicted_score = 0
-    confidence = 97
-    if st.session_state.anomaly_model:
-        keypoints_csv = os.path.join(current_cow_path, "keypoints.csv")
-        if os.path.exists(keypoints_csv):
-            try:
-                gait = GaitData(keypoints_csv)
-                features = gait.extract_features()
-                anomaly_score = st.session_state.anomaly_model.predict(features)
-                # Map anomaly score (0-1) to lameness (0-5)
-                predicted_score = int(anomaly_score * 5)
-                confidence = 1 - anomaly_score  # Higher confidence for normal
-            except Exception as e:
-                st.warning(f"Error computing prediction: {e}")
-        else:
-            st.info("No keypoints available for prediction")
-    else:
-        st.info("Anomaly model not trained yet")
 
-    col_lame, col_conf = st.columns(2)
-    col_lame.metric("Model Lameness Score", predicted_score)
-    col_conf.metric("Model Confidence Score", f"{confidence:.2f}")
-
+    # ── Model & JSON Scores ──
+    st.subheader("🤖 Model & JSON Predictions")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Model Lameness Score", cow_data.get("lameness_score", "-"))
+    col2.metric("Head Bob Score", f"{round(cow_data.get('head_bob_score', 0), 2) if cow_data.get('head_bob_score') is not None else '-'}")
+    col3.metric("Spine Score", f"{round(cow_data.get('spine_score', 0), 2) if cow_data.get('spine_score') is not None else '-'}")
+    st.markdown(f"**Needs Review:** `{cow_data.get('needs_review', '-')}` | **Review Priority:** `{cow_data.get('review_priority', '-')}`")
+    st.markdown(f"**Notes:** {cow_data.get('notes', '')}")
     st.divider()
 
-    # ── User Lameness Score Input ──
-    st.subheader("🧑‍⚕️ Your Lameness Score")
-
-    current_score = st.session_state.user_lameness_score[st.session_state.cow_index]
-    if current_score != 10:
-        st.success(f"Current selection: **{current_score}**")
-    else:
-        st.info("No score selected yet — pick one below")
-
-    btn_cols = st.columns(6)
-    for score_val, col in enumerate(btn_cols):
-        if col.button(str(score_val), key=f"score_{score_val}"):
-            st.session_state.user_lameness_score[st.session_state.cow_index] = score_val
-            st.rerun()
-
+    # ── Correction Inputs ──
+    st.subheader("🧑‍⚕️ Correction Inputs")
+    corrected_lameness = st.number_input(
+        "Corrected Lameness Score (0-5)", min_value=0, max_value=5,
+        value=cow_data.get("corrected_lameness_score") if cow_data.get("corrected_lameness_score") is not None else cow_data.get("lameness_score", 0),
+        key=f"corrected_lameness_{session}_{cow_folder}"
+    )
+    # Removed duplicate corrected ear tag field
+    notes = st.text_area(
+        "Correction Notes", value=cow_data.get("notes") or "",
+        key=f"notes_{session}_{cow_folder}"
+    )
     st.divider()
 
-    # ── Ear Tag Images ──
-    st.subheader("🏷️ Cow Ear Tag Images")
-    image_folder_path = os.path.join(current_cow_path, "images")
 
-    if os.path.exists(image_folder_path):
-        image_files = [
-            f for f in os.listdir(image_folder_path)
+
+    # ── Ear Tag Images Collage (from ear_tag folder) ──
+    st.subheader("🏷️ Cow Ear Tag Frames")
+    ear_tag_folder = os.path.join(current_cow_path, "ear_tag")
+    if os.path.exists(ear_tag_folder):
+        ear_tag_imgs = sorted([
+            f for f in os.listdir(ear_tag_folder)
             if f.lower().endswith((".png", ".jpg", ".jpeg"))
-        ]
-        if image_files:
-            col_eartags = st.columns(3)
-            for i, image_file in enumerate(image_files):
-                image_path = os.path.join(image_folder_path, image_file)
-                col_eartags[i % 3].image(image_path)
+        ], key=natural_sort_key)
+        if ear_tag_imgs:
+            cols = st.columns(3)
+            for i, img_file in enumerate(ear_tag_imgs):
+                img_path = os.path.join(ear_tag_folder, img_file)
+                with cols[i % 3]:
+                    st.image(img_path, width=300)
         else:
-            st.info("No ear tag images found")
+            st.info("No ear tag images found in ear_tag folder")
     else:
-        st.info("No images folder found for this cow")
+        st.info("No ear_tag folder found for this cow")
 
-    # ── Cow RFID ──
+    # ── Cow RFID (single correction field) ──
     cow_id = "ASDF-123"  # TODO: replace with CV model output
+    corrected_cow_id = st.text_input(
+        "Corrected Cow ID (Ear Tag)",
+        value=cow_data.get("corrected_cow_id", ""),
+        key=f"corrected_cow_id_{session}_{cow_folder}"
+    )
     st.markdown(f"**Cow RFID:** `{cow_id}`")
 
     st.divider()
 
-    # ── Submit ──
-    if st.session_state.user_lameness_score[st.session_state.cow_index] == 10:
-        st.warning("⚠️ Please select a lameness score (0–5) before submitting.")
 
-    if st.button("✅ Submit & Next Cow", disabled=(st.session_state.user_lameness_score[st.session_state.cow_index] == 10)):
+    # ── Submit ──
+    if st.button("✅ Submit & Next Cow"):
+        # Update lameness_analysis.json with corrections
+        cow_data["corrected_lameness_score"] = int(corrected_lameness)
+        cow_data["correction_timestamp"] = dt.datetime.now().isoformat()
+        cow_data["corrected_cow_id"] = corrected_cow_id
+        cow_data["notes"] = notes
+        with open(lameness_json_path, "w") as f:
+            json.dump(cow_data, f, indent=2)
         st.session_state.cow_index += 1
         st.rerun()
 

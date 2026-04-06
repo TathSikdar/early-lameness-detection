@@ -1,3 +1,55 @@
+def process_pose_and_lameness_for_cow(
+    cow_temp_id: str,
+    session_id: str,
+    output_dir: str,
+    pose_estimator,  # PoseEstimation instance
+    max_frames: int = 100
+):
+    """Run pose estimation on top view for a cow and update lameness_analysis.json."""
+    import numpy as np
+    from models.pose_analysis import compute_lameness_score
+    cow_folder = os.path.join(output_dir, session_id, cow_temp_id)
+    top_dir = os.path.join(cow_folder, "top")
+    # Find top video
+    top_video = None
+    if os.path.exists(top_dir):
+        for f in os.listdir(top_dir):
+            if f.endswith(".mp4"):
+                top_video = os.path.join(top_dir, f)
+                break
+    if not top_video or not os.path.exists(top_video):
+        print(f"[Pose] No top video found for {cow_temp_id}, skipping pose analysis.")
+        return
+    # Read frames from video
+    import cv2
+    cap = cv2.VideoCapture(top_video)
+    frames = []
+    count = 0
+    while True:
+        ret, frame = cap.read()
+        if not ret or count >= max_frames:
+            break
+        frames.append(frame)
+        count += 1
+    cap.release()
+    if not frames:
+        print(f"[Pose] No frames extracted from {top_video} for {cow_temp_id}.")
+        return
+    # Compute lameness score using frames and pose model
+    try:
+        lameness_result = compute_lameness_score(frames, pose_estimator.model)
+    except Exception as e:
+        print(f"[Pose] Lameness scoring failed for {cow_temp_id}: {e}")
+        return
+    # Save to JSON
+    create_or_update_cow_json(
+        cow_id=cow_temp_id,
+        session_id=session_id,
+        video_path=top_video,
+        cow_folder=cow_folder,
+        **lameness_result
+    )
+    print(f"[Pose] Lameness analysis updated for {cow_temp_id}")
 import os
 import json
 # Utility: Create or update cow JSON in cow folder
